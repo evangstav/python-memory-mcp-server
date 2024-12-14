@@ -57,13 +57,50 @@ cd python-memory-mcp-server
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install -e ".[test]"  # Include test dependencies
 ```
 
-3. Run the server locally:
+3. Run tests:
+```bash
+pytest                    # Run all tests
+pytest -v                # Run with verbose output
+pytest -v --cov         # Run with coverage report
+```
+
+4. Run the server locally:
 ```bash
 python -m memory_mcp_server
 ```
+
+## Testing
+
+The project uses pytest for testing. The test suite includes:
+
+### Unit Tests
+- `test_knowledge_graph_manager.py`: Tests for basic knowledge graph operations
+- `test_optimized_knowledge_graph_manager.py`: Tests for optimized/batch operations
+- `test_server.py`: Tests for MCP server implementation
+
+### Running Tests
+```bash
+# Run all tests
+pytest
+
+# Run with coverage report
+pytest --cov=memory_mcp_server
+
+# Run specific test file
+pytest tests/test_server.py
+
+# Run tests with verbose output
+pytest -v
+```
+
+### Test Fixtures
+The `conftest.py` file provides common test fixtures:
+- `temp_db_path`: Creates a temporary SQLite database
+- `knowledge_graph_manager`: Provides a KnowledgeGraphManager instance
+- `optimized_knowledge_graph_manager`: Provides an OptimizedKnowledgeGraphManager instance
 
 ## License
 
