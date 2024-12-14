@@ -4,14 +4,14 @@ import json
 import logging
 import argparse
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable, Awaitable
 
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from .knowledge_graph_manager import KnowledgeGraphManager
-from .interfaces import Relation, Entity
+from .interfaces import Relation, Entity, KnowledgeGraph
 from .exceptions import (
     KnowledgeGraphError,
     EntityNotFoundError,
@@ -21,15 +21,149 @@ from .exceptions import (
     JsonParsingError,
 )
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("knowledge-graph-server")
 
 
+def serialize_entity(e: Entity) -> Dict[str, Any]:
+    return {
+        "name": e.name,
+        "entityType": e.entityType,
+        "observations": list(e.observations),
+    }
+
+
+def serialize_relation(r: Relation) -> Dict[str, Any]:
+    return r.to_dict()
+
+
+def serialize_graph(g: KnowledgeGraph) -> Dict[str, Any]:
+    return {
+        "entities": [serialize_entity(e) for e in g.entities],
+        "relations": [serialize_relation(r) for r in g.relations],
+    }
+
+
+def handle_error(e: Exception) -> str:
+    if isinstance(e, EntityNotFoundError):
+        return f"Entity not found: {e.entity_name}"
+    elif isinstance(e, EntityAlreadyExistsError):
+        return f"Entity already exists: {e.entity_name}"
+    elif isinstance(e, RelationValidationError):
+        return str(e)
+    elif isinstance(e, FileAccessError):
+        return f"File access error: {str(e)}"
+    elif isinstance(e, JsonParsingError):
+        return f"Error parsing line {e.line_number}: {str(e.original_error)}"
+    elif isinstance(e, KnowledgeGraphError):
+        return f"Knowledge graph error: {str(e)}"
+    elif isinstance(e, ValueError):
+        return str(e)
+    else:
+        logger.error("Unexpected error", exc_info=True)
+        return f"Internal error: {str(e)}"
+
+
+async def tool_create_entities(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    entities = [
+        Entity(
+            name=e["name"], entityType=e["entityType"], observations=e["observations"]
+        )
+        for e in arguments["entities"]
+    ]
+    result = await manager.create_entities(entities)
+    return [
+        types.TextContent(
+            type="text", text=json.dumps([serialize_entity(ent) for ent in result])
+        )
+    ]
+
+
+async def tool_create_relations(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    relations = [Relation(**r) for r in arguments["relations"]]
+    result = await manager.create_relations(relations)
+    return [
+        types.TextContent(type="text", text=json.dumps([r.to_dict() for r in result]))
+    ]
+
+
+async def tool_add_observations(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    # arguments["observations"] is expected to be a list of {"entityName": str, "contents": List[str]}
+    result = await manager.add_observations(arguments["observations"])
+    return [types.TextContent(type="text", text=json.dumps(result))]
+
+
+async def tool_delete_entities(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    await manager.delete_entities(arguments["entityNames"])
+    return [types.TextContent(type="text", text="Entities deleted successfully")]
+
+
+async def tool_delete_observations(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    # arguments["deletions"] is expected to be a list of {"entityName": str, "observations": List[str]}
+    await manager.delete_observations(arguments["deletions"])
+    return [types.TextContent(type="text", text="Observations deleted successfully")]
+
+
+async def tool_delete_relations(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    relations = [Relation(**r) for r in arguments["relations"]]
+    await manager.delete_relations(relations)
+    return [types.TextContent(type="text", text="Relations deleted successfully")]
+
+
+async def tool_read_graph(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    graph = await manager.read_graph()
+    return [types.TextContent(type="text", text=json.dumps(serialize_graph(graph)))]
+
+
+async def tool_search_nodes(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    result = await manager.search_nodes(arguments["query"])
+    return [types.TextContent(type="text", text=json.dumps(serialize_graph(result)))]
+
+
+async def tool_open_nodes(
+    manager: KnowledgeGraphManager, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    result = await manager.open_nodes(arguments["names"])
+    return [types.TextContent(type="text", text=json.dumps(serialize_graph(result)))]
+
+
+TOOLS: Dict[
+    str,
+    Callable[
+        [KnowledgeGraphManager, Dict[str, Any]], Awaitable[List[types.TextContent]]
+    ],
+] = {
+    "create_entities": tool_create_entities,
+    "create_relations": tool_create_relations,
+    "add_observations": tool_add_observations,
+    "delete_entities": tool_delete_entities,
+    "delete_observations": tool_delete_observations,
+    "delete_relations": tool_delete_relations,
+    "read_graph": tool_read_graph,
+    "search_nodes": tool_search_nodes,
+    "open_nodes": tool_open_nodes,
+}
+
+
 async def async_main():
-    # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--path",
@@ -39,10 +173,7 @@ async def async_main():
     )
     args = parser.parse_args()
 
-    # Create manager instance
     manager = KnowledgeGraphManager(args.path)
-
-    # Create server instance
     app = Server("knowledge-graph-server")
 
     @app.list_tools()
@@ -93,11 +224,11 @@ async def async_main():
                                 "properties": {
                                     "from": {
                                         "type": "string",
-                                        "description": "The name of the entity where the relation starts",
+                                        "description": "The starting entity",
                                     },
                                     "to": {
                                         "type": "string",
-                                        "description": "The name of the entity where the relation ends",
+                                        "description": "The ending entity",
                                     },
                                     "relationType": {
                                         "type": "string",
@@ -124,12 +255,12 @@ async def async_main():
                                 "properties": {
                                     "entityName": {
                                         "type": "string",
-                                        "description": "The name of the entity to add the observations to",
+                                        "description": "The name of the entity",
                                     },
                                     "contents": {
                                         "type": "array",
                                         "items": {"type": "string"},
-                                        "description": "An array of observation contents to add",
+                                        "description": "Observation contents",
                                     },
                                 },
                                 "required": ["entityName", "contents"],
@@ -167,12 +298,12 @@ async def async_main():
                                 "properties": {
                                     "entityName": {
                                         "type": "string",
-                                        "description": "The name of the entity containing the observations",
+                                        "description": "The name of the entity",
                                     },
                                     "observations": {
                                         "type": "array",
                                         "items": {"type": "string"},
-                                        "description": "An array of observations to delete",
+                                        "description": "Observations to delete",
                                     },
                                 },
                                 "required": ["entityName", "observations"],
@@ -195,11 +326,11 @@ async def async_main():
                                 "properties": {
                                     "from": {
                                         "type": "string",
-                                        "description": "The name of the entity where the relation starts",
+                                        "description": "The starting entity",
                                     },
                                     "to": {
                                         "type": "string",
-                                        "description": "The name of the entity where the relation ends",
+                                        "description": "The ending entity",
                                     },
                                     "relationType": {
                                         "type": "string",
@@ -224,10 +355,7 @@ async def async_main():
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query to match against entity names, types, and observation content",
-                        }
+                        "query": {"type": "string", "description": "The search query"}
                     },
                     "required": ["query"],
                 },
@@ -241,7 +369,7 @@ async def async_main():
                         "names": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "An array of entity names to retrieve",
+                            "description": "Entity names to retrieve",
                         }
                     },
                     "required": ["names"],
@@ -249,123 +377,20 @@ async def async_main():
             ),
         ]
 
-    def handle_error(e: Exception) -> str:
-        """Convert exceptions to user-friendly error messages."""
-        if isinstance(e, EntityNotFoundError):
-            return f"Entity not found: {e.entity_name}"
-        elif isinstance(e, EntityAlreadyExistsError):
-            return f"Entity already exists: {e.entity_name}"
-        elif isinstance(e, RelationValidationError):
-            return str(e)
-        elif isinstance(e, FileAccessError):
-            return f"File access error: {str(e)}"
-        elif isinstance(e, JsonParsingError):
-            return f"Error parsing line {e.line_number}: {str(e.original_error)}"
-        elif isinstance(e, KnowledgeGraphError):
-            return f"Knowledge graph error: {str(e)}"
-        elif isinstance(e, ValueError):
-            return str(e)
-        else:
-            logger.error("Unexpected error", exc_info=True)
-            return f"Internal error: {str(e)}"
-
     @app.call_tool()
     async def call_tool(
         name: str, arguments: Dict[str, Any]
     ) -> List[types.TextContent]:
         try:
-            if name == "create_entities":
-                entities = [
-                    Entity(
-                        name=e["name"],
-                        entityType=e["entityType"],
-                        observations=e["observations"],
-                    )
-                    for e in arguments["entities"]
-                ]
-                result = await manager.create_entities(entities)
-                return [
-                    types.TextContent(
-                        type="text", text=json.dumps(result, default=vars)
-                    )
-                ]
-
-            elif name == "create_relations":
-                relations = [
-                    Relation(**r)  # This will handle both 'from' and 'from_'
-                    for r in arguments["relations"]
-                ]
-                result = await manager.create_relations(relations)
-                return [
-                    types.TextContent(
-                        type="text", text=json.dumps([r.to_dict() for r in result])
-                    )
-                ]
-
-            elif name == "add_observations":
-                result = await manager.add_observations(arguments["observations"])
-                return [types.TextContent(type="text", text=json.dumps(result))]
-
-            elif name == "delete_entities":
-                await manager.delete_entities(arguments["entityNames"])
-                return [
-                    types.TextContent(type="text", text="Entities deleted successfully")
-                ]
-
-            elif name == "delete_observations":
-                await manager.delete_observations(arguments["deletions"])
-                return [
-                    types.TextContent(
-                        type="text", text="Observations deleted successfully"
-                    )
-                ]
-
-            elif name == "delete_relations":
-                relations = [
-                    Relation(**r)  # This will handle both 'from' and 'from_'
-                    for r in arguments["relations"]
-                ]
-                await manager.delete_relations(relations)
-                return [
-                    types.TextContent(
-                        type="text", text="Relations deleted successfully"
-                    )
-                ]
-
-            elif name == "read_graph":
-                graph = await manager.read_graph()
-                # Convert entities and relations to dictionaries for JSON serialization
-                result = {
-                    "entities": [vars(e) for e in graph.entities],
-                    "relations": [r.to_dict() for r in graph.relations],
-                }
-                return [types.TextContent(type="text", text=json.dumps(result))]
-
-            elif name == "search_nodes":
-                result = await manager.search_nodes(arguments["query"])
-                graph_dict = {
-                    "entities": [vars(e) for e in result.entities],
-                    "relations": [r.to_dict() for r in result.relations],
-                }
-                return [types.TextContent(type="text", text=json.dumps(graph_dict))]
-
-            elif name == "open_nodes":
-                result = await manager.open_nodes(arguments["names"])
-                graph_dict = {
-                    "entities": [vars(e) for e in result.entities],
-                    "relations": [r.to_dict() for r in result.relations],
-                }
-                return [types.TextContent(type="text", text=json.dumps(graph_dict))]
-
-            else:
+            handler = TOOLS.get(name)
+            if not handler:
                 raise ValueError(f"Unknown tool: {name}")
-
+            return await handler(manager, arguments)
         except Exception as e:
             error_message = handle_error(e)
             logger.error(f"Error in tool {name}: {error_message}")
             return [types.TextContent(type="text", text=f"Error: {error_message}")]
 
-    # Run the server
     async with stdio_server() as (read_stream, write_stream):
         logger.info(f"Knowledge Graph MCP Server running on stdio (file: {args.path})")
         await app.run(read_stream, write_stream, app.create_initialization_options())
