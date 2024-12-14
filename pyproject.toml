@@ -1,9 +1,22 @@
 [project]
 name = "claude-memory-python"
 version = "0.1.0"
-description = "Add your description here"
+description = "Python package for managing Claude's memory and knowledge graph"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.1.2",
 ]
+
+[project.scripts]
+claude-memory = "claude_memory_python.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claude_memory_python"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
