@@ -262,14 +262,14 @@ async def async_main():
             elif name == "create_relations":
                 relations = [
                     Relation(
-                        from_=r["from"], to=r["to"], relationType=r["relationType"]
+                        **r  # This will handle both 'from' and 'from_'
                     )
                     for r in arguments["relations"]
                 ]
                 result = await manager.create_relations(relations)
                 return [
                     types.TextContent(
-                        type="text", text=json.dumps(result, default=vars)
+                        type="text", text=json.dumps([r.to_dict() for r in result])
                     )
                 ]
 
@@ -294,7 +294,7 @@ async def async_main():
             elif name == "delete_relations":
                 relations = [
                     Relation(
-                        from_=r["from"], to=r["to"], relationType=r["relationType"]
+                        **r  # This will handle both 'from' and 'from_'
                     )
                     for r in arguments["relations"]
                 ]
@@ -307,23 +307,36 @@ async def async_main():
 
             elif name == "read_graph":
                 graph = await manager.read_graph()
+                # Convert entities and relations to dictionaries for JSON serialization
+                result = {
+                    "entities": [vars(e) for e in graph.entities],
+                    "relations": [r.to_dict() for r in graph.relations]
+                }
                 return [
-                    types.TextContent(type="text", text=json.dumps(graph, default=vars))
+                    types.TextContent(type="text", text=json.dumps(result))
                 ]
 
             elif name == "search_nodes":
                 result = await manager.search_nodes(arguments["query"])
+                graph_dict = {
+                    "entities": [vars(e) for e in result.entities],
+                    "relations": [r.to_dict() for r in result.relations]
+                }
                 return [
                     types.TextContent(
-                        type="text", text=json.dumps(result, default=vars)
+                        type="text", text=json.dumps(graph_dict)
                     )
                 ]
 
             elif name == "open_nodes":
                 result = await manager.open_nodes(arguments["names"])
+                graph_dict = {
+                    "entities": [vars(e) for e in result.entities],
+                    "relations": [r.to_dict() for r in result.relations]
+                }
                 return [
                     types.TextContent(
-                        type="text", text=json.dumps(result, default=vars)
+                        type="text", text=json.dumps(graph_dict)
                     )
                 ]
 
