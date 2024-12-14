@@ -1,7 +1,12 @@
+import asyncio
 from pathlib import Path
 import json
 import os
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Set, Optional
+from collections import defaultdict
+import aiofiles
+import time
+from functools import lru_cache
 
 from .interfaces import KnowledgeGraph, Entity, Relation
 from .exceptions import (
@@ -13,381 +18,349 @@ from .exceptions import (
 )
 
 
-class KnowledgeGraphManager:
-    def __init__(self, memory_path: Path):
+class OptimizedKnowledgeGraphManager:
+    def __init__(self, memory_path: Path, cache_ttl: int = 60):
+        """
+        Initialize the OptimizedKnowledgeGraphManager.
+        
+        Args:
+            memory_path: Path to the knowledge graph file
+            cache_ttl: Time to live for cache in seconds (default: 60)
+        """
         self.memory_path = memory_path
+        self.cache_ttl = cache_ttl
+        self._cache: Optional[KnowledgeGraph] = None
+        self._cache_timestamp: float = 0
+        self._indices: Dict = defaultdict(dict)
+        self._lock = asyncio.Lock()
+        self._dirty = False
+        self._write_queue: List[Dict] = []
+        self._max_queue_size = 100
+        
+    def _build_indices(self, graph: KnowledgeGraph) -> None:
+        """Build indices for faster lookups."""
+        self._indices.clear()
+        
+        # Entity name index
+        self._indices["entity_names"] = {
+            entity.name: entity for entity in graph.entities
+        }
+        
+        # Entity type index
+        self._indices["entity_types"] = defaultdict(list)
+        for entity in graph.entities:
+            self._indices["entity_types"][entity.entityType].append(entity)
+            
+        # Relations index
+        self._indices["relations_from"] = defaultdict(list)
+        self._indices["relations_to"] = defaultdict(list)
+        for relation in graph.relations:
+            self._indices["relations_from"][relation.from_].append(relation)
+            self._indices["relations_to"][relation.to].append(relation)
 
-    def _check_file_permissions(self) -> None:
-        """Check if we have proper file permissions."""
-        try:
-            # Check if directory exists and is writable
-            if self.memory_path.exists():
-                if not os.access(self.memory_path, os.R_OK | os.W_OK):
-                    raise FileAccessError(
-                        f"Insufficient permissions for file: {self.memory_path}"
-                    )
-            else:
-                # Check if we can create the file
-                if not os.access(self.memory_path.parent, os.W_OK):
-                    raise FileAccessError(
-                        f"Cannot create file in directory: {self.memory_path.parent}"
-                    )
-        except OSError as e:
-            raise FileAccessError(f"File system error: {str(e)}")
+    async def _check_cache(self) -> KnowledgeGraph:
+        """Check if cache is valid and return cached graph."""
+        current_time = time.time()
+        
+        if (
+            self._cache is None
+            or current_time - self._cache_timestamp > self.cache_ttl
+            or self._dirty
+        ):
+            async with self._lock:
+                graph = await self._load_graph_from_file()
+                self._cache = graph
+                self._cache_timestamp = current_time
+                self._build_indices(graph)
+                self._dirty = False
+                
+        return self._cache
 
-    def _validate_entity(self, entity: Entity, existing_entities: Set[str]) -> None:
-        """Validate an entity before creation."""
-        if not entity.name:
-            raise ValueError("Entity name cannot be empty")
-        if not entity.entityType:
-            raise ValueError("Entity type cannot be empty")
-        if entity.name in existing_entities:
-            raise EntityAlreadyExistsError(entity.name)
-
-    def _validate_relation(
-        self, relation: Relation, existing_entities: Set[str]
-    ) -> None:
-        """Validate a relation before creation."""
-        if not relation.from_:
-            raise RelationValidationError("Relation 'from' field cannot be empty")
-        if not relation.to:
-            raise RelationValidationError("Relation 'to' field cannot be empty")
-        if not relation.relationType:
-            raise RelationValidationError("Relation type cannot be empty")
-
-        if relation.from_ not in existing_entities:
-            raise EntityNotFoundError(relation.from_)
-        if relation.to not in existing_entities:
-            raise EntityNotFoundError(relation.to)
-
-    async def load_graph(self) -> KnowledgeGraph:
+    async def _load_graph_from_file(self) -> KnowledgeGraph:
         """Load the knowledge graph from file with improved error handling."""
-        self._check_file_permissions()
+        if not self.memory_path.exists():
+            return KnowledgeGraph(entities=[], relations=[])
 
         try:
-            if not self.memory_path.exists():
-                return KnowledgeGraph(entities=[], relations=[])
-
-            with self.memory_path.open("r", encoding="utf-8") as f:
-                lines = [line.strip() for line in f if line.strip()]
-                graph = KnowledgeGraph(entities=[], relations=[])
-
-                for i, line in enumerate(lines, 1):
-                    try:
-                        item = json.loads(line)
-
-                        # Validate required fields
-                        if "type" not in item:
-                            raise ValueError("Missing 'type' field")
-
-                        if item["type"] == "entity":
-                            if "name" not in item:
-                                raise ValueError("Missing 'name' field in entity")
-                            if "entityType" not in item:
-                                raise ValueError("Missing 'entityType' field in entity")
-                            if "observations" not in item:
-                                raise ValueError(
-                                    "Missing 'observations' field in entity"
-                                )
-
-                            graph.entities.append(
-                                Entity(
-                                    name=item["name"],
-                                    entityType=item["entityType"],
-                                    observations=item["observations"],
-                                )
+            async with aiofiles.open(self.memory_path, mode='r', encoding='utf-8') as f:
+                lines = [line.strip() for line in await f.readlines() if line.strip()]
+                
+            graph = KnowledgeGraph(entities=[], relations=[])
+            
+            for i, line in enumerate(lines, 1):
+                try:
+                    item = json.loads(line)
+                    
+                    if item["type"] == "entity":
+                        graph.entities.append(
+                            Entity(
+                                name=item["name"],
+                                entityType=item["entityType"],
+                                observations=item["observations"],
                             )
-                        elif item["type"] == "relation":
-                            if "from" not in item:
-                                raise ValueError("Missing 'from' field in relation")
-                            if "to" not in item:
-                                raise ValueError("Missing 'to' field in relation")
-                            if "relationType" not in item:
-                                raise ValueError(
-                                    "Missing 'relationType' field in relation"
-                                )
-
-                            graph.relations.append(
-                                Relation(
-                                    from_=item["from"],
-                                    to=item["to"],
-                                    relationType=item["relationType"],
-                                )
+                        )
+                    elif item["type"] == "relation":
+                        graph.relations.append(
+                            Relation(
+                                from_=item["from"],
+                                to=item["to"],
+                                relationType=item["relationType"],
                             )
-                        else:
-                            raise ValueError(f"Unknown type: {item['type']}")
-
-                    except json.JSONDecodeError as e:
-                        raise JsonParsingError(i, line, e)
-                    except Exception as e:
-                        raise ValueError(f"Error processing line {i}: {str(e)}")
-
-                return graph
-
-        except FileNotFoundError:
-            return KnowledgeGraph(entities=[], relations=[])
-        except (OSError, IOError) as e:
+                        )
+                        
+                except (json.JSONDecodeError, KeyError) as e:
+                    raise JsonParsingError(i, line, e)
+                    
+            return graph
+            
+        except Exception as e:
             raise FileAccessError(f"Error reading file: {str(e)}")
 
-    async def save_graph(self, graph: KnowledgeGraph) -> None:
-        """Save the knowledge graph to file with improved error handling."""
-        self._check_file_permissions()
+    async def _save_graph(self, graph: KnowledgeGraph) -> None:
+        """Save the knowledge graph to file with batched writes."""
+        lines = []
+        
+        for entity in graph.entities:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "entity",
+                        "name": entity.name,
+                        "entityType": entity.entityType,
+                        "observations": entity.observations,
+                    }
+                )
+            )
+            
+        for relation in graph.relations:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "relation",
+                        "from": relation.from_,
+                        "to": relation.to,
+                        "relationType": relation.relationType,
+                    }
+                )
+            )
 
+        # Ensure the directory exists
+        self.memory_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write to a temporary file first
+        temp_path = self.memory_path.with_suffix('.tmp')
         try:
-            lines = []
-            existing_entities = {entity.name for entity in graph.entities}
+            async with aiofiles.open(temp_path, mode='w', encoding='utf-8') as f:
+                await f.write("\n".join(lines))
+            
+            # Atomic rename
+            temp_path.replace(self.memory_path)
+            
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
 
-            # Validate all entities and relations before saving
-            for entity in graph.entities:
+    @lru_cache(maxsize=1000)
+    def _get_entity_by_name(self, name: str) -> Optional[Entity]:
+        """Get entity by name using cache."""
+        return self._indices["entity_names"].get(name)
+
+    async def create_entities(self, entities: List[Entity]) -> List[Entity]:
+        """Create multiple new entities with validation and batching."""
+        async with self._lock:
+            graph = await self._check_cache()
+            existing_entities = self._indices["entity_names"]
+            new_entities = []
+
+            for entity in entities:
                 if not entity.name or not entity.entityType:
                     raise ValueError(f"Invalid entity: {entity}")
+                    
+                if entity.name not in existing_entities:
+                    new_entities.append(entity)
+                    self._indices["entity_names"][entity.name] = entity
+                    self._indices["entity_types"][entity.entityType].append(entity)
 
-            for relation in graph.relations:
+            if new_entities:
+                graph.entities.extend(new_entities)
+                self._dirty = True
+                
+                # Add to write queue
+                self._write_queue.extend([{
+                    "type": "entity",
+                    "name": entity.name,
+                    "entityType": entity.entityType,
+                    "observations": entity.observations,
+                } for entity in new_entities])
+                
+                # Flush queue if it's full
+                if len(self._write_queue) >= self._max_queue_size:
+                    await self._save_graph(graph)
+                    self._write_queue.clear()
+                    
+            return new_entities
+
+    async def create_relations(self, relations: List[Relation]) -> List[Relation]:
+        """Create multiple new relations with validation and batching."""
+        async with self._lock:
+            graph = await self._check_cache()
+            existing_entities = self._indices["entity_names"]
+            new_relations = []
+
+            for relation in relations:
                 if not relation.from_ or not relation.to or not relation.relationType:
                     raise ValueError(f"Invalid relation: {relation}")
+                    
                 if relation.from_ not in existing_entities:
                     raise EntityNotFoundError(relation.from_)
                 if relation.to not in existing_entities:
                     raise EntityNotFoundError(relation.to)
 
-            # Create the JSON lines
-            for entity in graph.entities:
-                lines.append(
-                    json.dumps(
-                        {
-                            "type": "entity",
-                            "name": entity.name,
-                            "entityType": entity.entityType,
-                            "observations": entity.observations,
-                        }
-                    )
-                )
-            for relation in graph.relations:
-                lines.append(
-                    json.dumps(
-                        {
-                            "type": "relation",
-                            "from": relation.from_,
-                            "to": relation.to,
-                            "relationType": relation.relationType,
-                        }
-                    )
-                )
-
-            # Ensure the directory exists
-            self.memory_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write to a temporary file first
-            temp_path = self.memory_path.with_suffix(".tmp")
-            try:
-                with temp_path.open("w", encoding="utf-8") as f:
-                    f.write("\n".join(lines))
-
-                # Rename the temporary file to the actual file
-                # This provides atomic writes
-                temp_path.replace(self.memory_path)
-            finally:
-                # Clean up the temporary file if it still exists
-                if temp_path.exists():
-                    temp_path.unlink()
-
-        except (OSError, IOError) as e:
-            raise FileAccessError(f"Error writing to file: {str(e)}")
-
-    async def create_entities(self, entities: List[Entity]) -> List[Entity]:
-        """Create multiple new entities with validation."""
-        graph = await self.load_graph()
-        existing_entities = {entity.name for entity in graph.entities}
-        new_entities = []
-
-        for entity in entities:
-            try:
-                self._validate_entity(entity, existing_entities)
-                new_entities.append(entity)
-                existing_entities.add(entity.name)
-            except EntityAlreadyExistsError:
-                # Skip duplicates silently as per original behavior
-                continue
-
-        graph.entities.extend(new_entities)
-        await self.save_graph(graph)
-        return new_entities
-
-    async def create_relations(self, relations: List[Relation]) -> List[Relation]:
-        """Create multiple new relations with validation."""
-        graph = await self.load_graph()
-        existing_entities = {entity.name for entity in graph.entities}
-        new_relations = []
-
-        for relation in relations:
-            try:
-                self._validate_relation(relation, existing_entities)
+                # Check for duplicates using indices
                 if not any(
-                    existing.from_ == relation.from_
-                    and existing.to == relation.to
-                    and existing.relationType == relation.relationType
-                    for existing in graph.relations
+                    r.from_ == relation.from_
+                    and r.to == relation.to
+                    and r.relationType == relation.relationType
+                    for r in self._indices["relations_from"][relation.from_]
                 ):
                     new_relations.append(relation)
-            except (EntityNotFoundError, RelationValidationError) as e:
-                raise e
+                    self._indices["relations_from"][relation.from_].append(relation)
+                    self._indices["relations_to"][relation.to].append(relation)
 
-        graph.relations.extend(new_relations)
-        await self.save_graph(graph)
-        return new_relations
+            if new_relations:
+                graph.relations.extend(new_relations)
+                self._dirty = True
+                
+                # Add to write queue
+                self._write_queue.extend([{
+                    "type": "relation",
+                    "from": relation.from_,
+                    "to": relation.to,
+                    "relationType": relation.relationType,
+                } for relation in new_relations])
+                
+                # Flush queue if it's full
+                if len(self._write_queue) >= self._max_queue_size:
+                    await self._save_graph(graph)
+                    self._write_queue.clear()
+                    
+            return new_relations
 
-    async def add_observations(
-        self, observations: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Add new observations to existing entities with validation."""
-        graph = await self.load_graph()
-        results = []
+    async def add_observations(self, observations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Add new observations to existing entities with batching."""
+        async with self._lock:
+            graph = await self._check_cache()
+            results = []
 
-        for obs in observations:
-            if "entityName" not in obs:
-                raise ValueError("Missing 'entityName' in observation")
-            if "contents" not in obs:
-                raise ValueError("Missing 'contents' in observation")
+            for obs in observations:
+                entity_name = obs.get("entityName")
+                contents = obs.get("contents", [])
+                
+                if not entity_name or not isinstance(contents, list):
+                    raise ValueError("Invalid observation format")
 
-            entity = next(
-                (e for e in graph.entities if e.name == obs["entityName"]), None
-            )
-            if not entity:
-                raise EntityNotFoundError(obs["entityName"])
+                entity = self._get_entity_by_name(entity_name)
+                if not entity:
+                    raise EntityNotFoundError(entity_name)
 
-            # Validate observation contents
-            if not isinstance(obs["contents"], list):
-                raise ValueError("Contents must be a list of strings")
-            if not all(isinstance(content, str) for content in obs["contents"]):
-                raise ValueError("All contents must be strings")
+                new_obs = [
+                    content
+                    for content in contents
+                    if content not in entity.observations
+                ]
+                
+                if new_obs:
+                    entity.observations.extend(new_obs)
+                    self._dirty = True
+                    results.append({
+                        "entityName": entity_name,
+                        "addedObservations": new_obs
+                    })
 
-            new_obs = [
-                content
-                for content in obs["contents"]
-                if content not in entity.observations
-            ]
-            entity.observations.extend(new_obs)
-            results.append(
-                {"entityName": obs["entityName"], "addedObservations": new_obs}
-            )
-
-        await self.save_graph(graph)
-        return results
-
-    async def delete_entities(self, entity_names: List[str]) -> None:
-        """Delete multiple entities and their associated relations."""
-        if not entity_names:
-            raise ValueError("Entity names list cannot be empty")
-
-        graph = await self.load_graph()
-        # Check if any of the entities exist before deleting
-        existing_names = {entity.name for entity in graph.entities}
-        for name in entity_names:
-            if name not in existing_names:
-                raise EntityNotFoundError(name)
-
-        graph.entities = [e for e in graph.entities if e.name not in entity_names]
-        graph.relations = [
-            r
-            for r in graph.relations
-            if r.from_ not in entity_names and r.to not in entity_names
-        ]
-        await self.save_graph(graph)
-
-    async def delete_observations(self, deletions: List[Dict[str, Any]]) -> None:
-        """Delete specific observations from entities."""
-        graph = await self.load_graph()
-        for deletion in deletions:
-            if "entityName" not in deletion:
-                raise ValueError("Missing 'entityName' in deletion")
-            if "observations" not in deletion:
-                raise ValueError("Missing 'observations' in deletion")
-
-            entity = next(
-                (e for e in graph.entities if e.name == deletion["entityName"]), None
-            )
-            if not entity:
-                raise EntityNotFoundError(deletion["entityName"])
-
-            if not isinstance(deletion["observations"], list):
-                raise ValueError("Observations must be a list of strings")
-
-            entity.observations = [
-                obs
-                for obs in entity.observations
-                if obs not in deletion["observations"]
-            ]
-
-        await self.save_graph(graph)
-
-    async def delete_relations(self, relations: List[Relation]) -> None:
-        """Delete specific relations from the graph."""
-        if not relations:
-            raise ValueError("Relations list cannot be empty")
-
-        graph = await self.load_graph()
-        graph.relations = [
-            r
-            for r in graph.relations
-            if not any(
-                dr.from_ == r.from_
-                and dr.to == r.to
-                and dr.relationType == r.relationType
-                for dr in relations
-            )
-        ]
-        await self.save_graph(graph)
+            if results:
+                await self._save_graph(graph)
+                
+            return results
 
     async def read_graph(self) -> KnowledgeGraph:
-        """Read the entire knowledge graph."""
-        return await self.load_graph()
+        """Read the entire knowledge graph using cache."""
+        return await self._check_cache()
 
     async def search_nodes(self, query: str) -> KnowledgeGraph:
-        """Search for nodes in the knowledge graph."""
+        """Search for nodes in the knowledge graph using indices."""
         if not query:
             raise ValueError("Search query cannot be empty")
 
-        graph = await self.load_graph()
+        graph = await self._check_cache()
         query = query.lower()
-
-        filtered_entities = [
-            e
-            for e in graph.entities
-            if (
-                query in e.name.lower()
-                or query in e.entityType.lower()
-                or any(query in obs.lower() for obs in e.observations)
-            )
-        ]
-
+        
+        # Use indices for faster searching
+        filtered_entities = set()
+        
+        # Search by entity name
+        filtered_entities.update(
+            entity for entity in graph.entities
+            if query in entity.name.lower()
+        )
+        
+        # Search by entity type
+        for entity_type, entities in self._indices["entity_types"].items():
+            if query in entity_type.lower():
+                filtered_entities.update(entities)
+                
+        # Search in observations
+        for entity in graph.entities:
+            if any(query in obs.lower() for obs in entity.observations):
+                filtered_entities.add(entity)
+                
         filtered_entity_names = {e.name for e in filtered_entities}
+        
+        # Use relation indices for faster filtering
         filtered_relations = [
-            r
-            for r in graph.relations
-            if r.from_ in filtered_entity_names and r.to in filtered_entity_names
+            relation for relation in graph.relations
+            if relation.from_ in filtered_entity_names 
+            and relation.to in filtered_entity_names
         ]
 
-        return KnowledgeGraph(entities=filtered_entities, relations=filtered_relations)
+        return KnowledgeGraph(
+            entities=list(filtered_entities),
+            relations=filtered_relations
+        )
 
     async def open_nodes(self, names: List[str]) -> KnowledgeGraph:
-        """Open specific nodes by their names."""
+        """Open specific nodes by their names using indices."""
         if not names:
             raise ValueError("Names list cannot be empty")
 
-        graph = await self.load_graph()
-        filtered_entities = [e for e in graph.entities if e.name in names]
-
-        # Check if all requested entities were found
-        found_names = {e.name for e in filtered_entities}
-        missing_names = set(names) - found_names
-        if missing_names:
-            raise EntityNotFoundError(next(iter(missing_names)))
-
+        graph = await self._check_cache()
+        filtered_entities = []
+        
+        for name in names:
+            entity = self._get_entity_by_name(name)
+            if entity is None:
+                raise EntityNotFoundError(name)
+            filtered_entities.append(entity)
+            
         filtered_entity_names = {e.name for e in filtered_entities}
-        filtered_relations = [
-            r
-            for r in graph.relations
-            if r.from_ in filtered_entity_names and r.to in filtered_entity_names
-        ]
+        
+        # Use relation indices for faster filtering
+        filtered_relations = []
+        for name in filtered_entity_names:
+            filtered_relations.extend(
+                relation for relation in self._indices["relations_from"][name]
+                if relation.to in filtered_entity_names
+            )
 
-        return KnowledgeGraph(entities=filtered_entities, relations=filtered_relations)
+        return KnowledgeGraph(
+            entities=filtered_entities,
+            relations=filtered_relations
+        )
+
+    async def flush(self) -> None:
+        """Force flush any pending writes to disk."""
+        if self._write_queue:
+            async with self._lock:
+                graph = await self._check_cache()
+                await self._save_graph(graph)
+                self._write_queue.clear()
+                self._dirty = False
