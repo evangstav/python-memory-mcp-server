@@ -43,4 +43,3 @@ class JsonParsingError(KnowledgeGraphError):
             f"Failed to parse JSON at line {line_number}: {str(original_error)}\n"
             f"Content: {line_content}"
         )
-
