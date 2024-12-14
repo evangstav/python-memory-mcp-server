@@ -10,15 +10,15 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from knowledge_graph_manager import KnowledgeGraphManager
-from interfaces import Relation, Entity
+from .knowledge_graph_manager import KnowledgeGraphManager
+from .interfaces import Relation, Entity
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("knowledge-graph-server")
 
 
-async def main():
+async def async_main():
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -340,11 +340,15 @@ async def main():
         await app.run(read_stream, write_stream, app.create_initialization_options())
 
 
-if __name__ == "__main__":
+def main():
     try:
-        asyncio.run(main())
+        asyncio.run(async_main())
     except KeyboardInterrupt:
         logger.info("Server shutting down...")
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         exit(1)
+
+
+if __name__ == "__main__":
+    main()

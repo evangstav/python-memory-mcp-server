@@ -1,4 +1,4 @@
-from interfaces import KnowledgeGraph, Entity, Relation
+from .interfaces import KnowledgeGraph, Entity, Relation
 import json
 from typing import List, Dict, Any
 
