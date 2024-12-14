@@ -35,4 +35,3 @@ class Relation:
 class KnowledgeGraph:
     entities: List[Entity]
     relations: List[Relation]
-

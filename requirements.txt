@@ -1,2 +1,3 @@
 hatchling
 mcp>=1.1.2
+aiofiles>=23.2.1
