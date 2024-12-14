@@ -65,3 +65,4 @@ class KnowledgeGraphManager:
         self.memory_path.parent.mkdir(parents=True, exist_ok=True)
         with self.memory_path.open("w", encoding="utf-8") as f:
             f.write("\n".join(lines))
+

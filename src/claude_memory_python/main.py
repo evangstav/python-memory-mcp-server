@@ -31,3 +31,4 @@ async def async_main():
 
     # Create manager instance
     manager = KnowledgeGraphManager(args.path)
+
