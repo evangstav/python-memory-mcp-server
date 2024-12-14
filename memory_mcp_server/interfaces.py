@@ -10,9 +10,11 @@ class Entity:
 
     def __init__(self, name: str, entityType: str, observations: List[str]):
         # We need to use object.__setattr__ because the class is frozen
-        object.__setattr__(self, 'name', name)
-        object.__setattr__(self, 'entityType', entityType)
-        object.__setattr__(self, 'observations', tuple(observations))  # Convert list to tuple
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "entityType", entityType)
+        object.__setattr__(
+            self, "observations", tuple(observations)
+        )  # Convert list to tuple
 
 
 @dataclass
@@ -38,3 +40,4 @@ class Relation:
 class KnowledgeGraph:
     entities: List[Entity]
     relations: List[Relation]
+

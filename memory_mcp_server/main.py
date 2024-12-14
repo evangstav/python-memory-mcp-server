@@ -10,9 +10,9 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from .knowledge_graph_manager import KnowledgeGraphManager
-from .interfaces import Relation, Entity
-from .exceptions import (
+from knowledge_graph_manager import KnowledgeGraphManager
+from interfaces import Relation, Entity
+from exceptions import (
     KnowledgeGraphError,
     EntityNotFoundError,
     EntityAlreadyExistsError,

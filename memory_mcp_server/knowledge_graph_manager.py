@@ -8,11 +8,10 @@ import aiofiles
 import time
 from functools import lru_cache
 
-from .interfaces import KnowledgeGraph, Entity, Relation
-from .exceptions import (
+from interfaces import KnowledgeGraph, Entity, Relation
+from exceptions import (
     EntityNotFoundError,
     FileAccessError,
-    JsonParsingError,
 )
 
 
@@ -172,7 +171,7 @@ class KnowledgeGraphManager:
                 await f.write("\n".join(lines))
 
             # Atomic rename
-            if os.name == 'nt':  # Windows
+            if os.name == "nt":  # Windows
                 if self.memory_path.exists():
                     self.memory_path.unlink()
                 temp_path.rename(self.memory_path)
@@ -279,8 +278,7 @@ class KnowledgeGraphManager:
         ]
 
         return KnowledgeGraph(
-            entities=list(filtered_entities),
-            relations=filtered_relations
+            entities=list(filtered_entities), relations=filtered_relations
         )
 
     async def flush(self) -> None:
