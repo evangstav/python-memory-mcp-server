@@ -75,7 +75,7 @@ class KnowledgeGraphManager:
                 for i, line in enumerate(lines, 1):
                     try:
                         item = json.loads(line)
-                        
+
                         # Validate required fields
                         if "type" not in item:
                             raise ValueError("Missing 'type' field")
@@ -86,7 +86,9 @@ class KnowledgeGraphManager:
                             if "entityType" not in item:
                                 raise ValueError("Missing 'entityType' field in entity")
                             if "observations" not in item:
-                                raise ValueError("Missing 'observations' field in entity")
+                                raise ValueError(
+                                    "Missing 'observations' field in entity"
+                                )
 
                             graph.entities.append(
                                 Entity(
@@ -101,7 +103,9 @@ class KnowledgeGraphManager:
                             if "to" not in item:
                                 raise ValueError("Missing 'to' field in relation")
                             if "relationType" not in item:
-                                raise ValueError("Missing 'relationType' field in relation")
+                                raise ValueError(
+                                    "Missing 'relationType' field in relation"
+                                )
 
                             graph.relations.append(
                                 Relation(
@@ -174,11 +178,11 @@ class KnowledgeGraphManager:
             self.memory_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write to a temporary file first
-            temp_path = self.memory_path.with_suffix('.tmp')
+            temp_path = self.memory_path.with_suffix(".tmp")
             try:
                 with temp_path.open("w", encoding="utf-8") as f:
                     f.write("\n".join(lines))
-                
+
                 # Rename the temporary file to the actual file
                 # This provides atomic writes
                 temp_path.replace(self.memory_path)
@@ -313,7 +317,7 @@ class KnowledgeGraphManager:
                 for obs in entity.observations
                 if obs not in deletion["observations"]
             ]
-        
+
         await self.save_graph(graph)
 
     async def delete_relations(self, relations: List[Relation]) -> None:
@@ -372,7 +376,7 @@ class KnowledgeGraphManager:
 
         graph = await self.load_graph()
         filtered_entities = [e for e in graph.entities if e.name in names]
-        
+
         # Check if all requested entities were found
         found_names = {e.name for e in filtered_entities}
         missing_names = set(names) - found_names
