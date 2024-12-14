@@ -2,11 +2,17 @@ from dataclasses import dataclass
 from typing import List
 
 
-@dataclass
+@dataclass(frozen=True)  # Make it hashable by adding frozen=True
 class Entity:
     name: str
     entityType: str
-    observations: List[str]
+    observations: tuple  # Change list to tuple to make it hashable
+
+    def __init__(self, name: str, entityType: str, observations: List[str]):
+        # We need to use object.__setattr__ because the class is frozen
+        object.__setattr__(self, 'name', name)
+        object.__setattr__(self, 'entityType', entityType)
+        object.__setattr__(self, 'observations', tuple(observations))  # Convert list to tuple
 
 
 @dataclass
@@ -23,9 +29,6 @@ class Relation:
             self.from_ = kwargs["from_"]
         self.to = kwargs["to"]
         self.relationType = kwargs["relationType"]
-
-    def __repr__(self):
-        return f"Relation(from={self.from_}, to={self.to}, relationType={self.relationType})"
 
     def to_dict(self):
         return {"from": self.from_, "to": self.to, "relationType": self.relationType}

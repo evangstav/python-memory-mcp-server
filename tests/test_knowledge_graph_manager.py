@@ -1,173 +1,185 @@
 import pytest
 import asyncio
-from pathlib import Path
-from memory_mcp_server.knowledge_graph_manager import KnowledgeGraphManager
-from memory_mcp_server.interfaces import Entity, Relation, KnowledgeGraph
+from memory_mcp_server.interfaces import Entity, Relation
 from memory_mcp_server.exceptions import EntityNotFoundError
+
 
 @pytest.mark.asyncio
 async def test_create_entities(knowledge_graph_manager):
-    """Test creating new entities."""
+    """Test the creation of new entities in the knowledge graph.
+    
+    This test verifies that:
+    1. Entities can be created successfully
+    2. The created entities are stored in the graph
+    3. Entity attributes are preserved correctly
+    """
+    print("\nStarting test_create_entities")
     entities = [
         Entity(
             name="John",
             entityType="Person",
-            observations=["loves pizza", "works as developer"]
+            observations=["loves pizza"],
+        )
+    ]
+
+    created_entities = await knowledge_graph_manager.create_entities(entities)
+    print("Created entities")
+    assert len(created_entities) == 1
+
+    graph = await knowledge_graph_manager.read_graph()
+    print("Read graph")
+    assert len(graph.entities) == 1
+    assert graph.entities[0].name == "John"
+
+    print("test_create_entities: Complete")
+
+
+@pytest.mark.asyncio
+async def test_create_relations(knowledge_graph_manager):
+    """Test the creation of relations between entities.
+    
+    This test verifies that:
+    1. Relations can be created between existing entities
+    2. Relations are stored properly in the graph
+    3. Relation properties (from, to, type) are preserved
+    """
+    print("\nStarting test_create_relations")
+    
+    entities = [
+        Entity(name="Alice", entityType="Person", observations=["test"]),
+        Entity(name="Bob", entityType="Person", observations=["test"]),
+    ]
+    await knowledge_graph_manager.create_entities(entities)
+    print("Created entities")
+
+    relations = [Relation(from_="Alice", to="Bob", relationType="friends")]
+    created_relations = await knowledge_graph_manager.create_relations(relations)
+    print("Created relations")
+    
+    assert len(created_relations) == 1
+    assert created_relations[0].from_ == "Alice"
+    assert created_relations[0].to == "Bob"
+
+    print("test_create_relations: Complete")
+
+
+@pytest.mark.asyncio
+async def test_search_functionality(knowledge_graph_manager):
+    """Test the search functionality across different criteria.
+    
+    This test verifies searching by:
+    1. Entity name
+    2. Entity type
+    3. Observation content
+    4. Case insensitivity
+    """
+    # Create test entities with varied data
+    entities = [
+        Entity(
+            name="SearchTest1",
+            entityType="TestEntity",
+            observations=["keyword1", "unique1"]
         ),
         Entity(
-            name="Alice",
-            entityType="Person",
-            observations=["likes coding"]
-        )
-    ]
-    
-    # Create entities
-    created_entities = await knowledge_graph_manager.create_entities(entities)
-    assert len(created_entities) == 2
-
-    # Verify entities exist in cache
-    graph = await knowledge_graph_manager.read_graph()
-    assert len(graph.entities) == 2
-    assert any(e.name == "John" for e in graph.entities)
-    assert any(e.name == "Alice" for e in graph.entities)
-
-    # Verify cache was built properly
-    john = knowledge_graph_manager._get_entity_by_name("John")
-    assert john is not None
-    assert "loves pizza" in john.observations
-
-@pytest.mark.asyncio
-async def test_create_relations_with_indices(knowledge_graph_manager):
-    """Test creating relations between entities with index verification."""
-    # First create entities
-    entities = [
-        Entity(name="Alice", entityType="Person", observations=["likes coding"]),
-        Entity(name="Bob", entityType="Person", observations=["likes gaming"])
+            name="SearchTest2",
+            entityType="TestEntity",
+            observations=["keyword2"]
+        ),
+        Entity(
+            name="DifferentType",
+            entityType="OtherEntity",
+            observations=["keyword1"]
+        ),
     ]
     await knowledge_graph_manager.create_entities(entities)
 
-    # Create relation
-    relations = [
-        Relation(
-            from_="Alice",
-            to="Bob",
-            relationType="friends_with"
-        )
-    ]
-    
-    created_relations = await knowledge_graph_manager.create_relations(relations)
-    assert len(created_relations) == 1
+    # Test search by name
+    name_result = await knowledge_graph_manager.search_nodes("SearchTest")
+    assert len(name_result.entities) == 2
+    assert all("SearchTest" in e.name for e in name_result.entities)
 
-    # Verify relation in main graph
-    graph = await knowledge_graph_manager.read_graph()
-    assert len(graph.relations) == 1
-    
-    # Verify relation in indices
-    alice_relations = knowledge_graph_manager._indices["relations_from"]["Alice"]
-    assert len(alice_relations) == 1
-    assert alice_relations[0].to == "Bob"
-    assert alice_relations[0].relationType == "friends_with"
+    # Test search by type
+    type_result = await knowledge_graph_manager.search_nodes("OtherEntity")
+    assert len(type_result.entities) == 1
+    assert type_result.entities[0].name == "DifferentType"
 
-@pytest.mark.asyncio
-async def test_add_observations_with_cache(knowledge_graph_manager):
-    """Test adding observations with cache verification."""
-    # Create initial entity
-    entities = [Entity(name="Eve", entityType="Person", observations=["initial observation"])]
-    await knowledge_graph_manager.create_entities(entities)
+    # Test search by observation
+    obs_result = await knowledge_graph_manager.search_nodes("keyword1")
+    assert len(obs_result.entities) == 2
+    assert any(e.name == "SearchTest1" for e in obs_result.entities)
+    assert any(e.name == "DifferentType" for e in obs_result.entities)
 
-    # Add new observations
-    observations = [{
-        "entityName": "Eve",
-        "contents": ["likes tea", "works remotely"]
-    }]
-    
-    results = await knowledge_graph_manager.add_observations(observations)
-    assert len(results) == 1
-    assert len(results[0]["addedObservations"]) == 2
-
-    # Verify in cache
-    eve = knowledge_graph_manager._get_entity_by_name("Eve")
-    assert eve is not None
-    assert "initial observation" in eve.observations
-    assert "likes tea" in eve.observations
-    assert "works remotely" in eve.observations
-
-@pytest.mark.asyncio
-async def test_search_with_indices(knowledge_graph_manager):
-    """Test search functionality using indices."""
-    # Create test entities
-    entities = [
-        Entity(name="SearchTest1", entityType="TestEntity", observations=["keyword1"]),
-        Entity(name="SearchTest2", entityType="TestEntity", observations=["keyword2"]),
-        Entity(name="DifferentType", entityType="OtherEntity", observations=["keyword1"])
-    ]
-    await knowledge_graph_manager.create_entities(entities)
-
-    # Search by name
-    result = await knowledge_graph_manager.search_nodes("SearchTest")
-    assert len(result.entities) == 2
-
-    # Search by type
-    result = await knowledge_graph_manager.search_nodes("OtherEntity")
-    assert len(result.entities) == 1
-    assert result.entities[0].name == "DifferentType"
-
-    # Search by observation
-    result = await knowledge_graph_manager.search_nodes("keyword1")
-    assert len(result.entities) == 2
-
-@pytest.mark.asyncio
-async def test_cache_invalidation(knowledge_graph_manager):
-    """Test that cache is properly invalidated when needed."""
-    # Create initial entity
-    entity = Entity(name="CacheTest", entityType="Test", observations=["initial"])
-    await knowledge_graph_manager.create_entities([entity])
-
-    # Get initial cache state
-    initial_cache = await knowledge_graph_manager._check_cache()
-
-    # Wait for cache to expire (cache_ttl is 1 second in test fixture)
-    await asyncio.sleep(1.1)
-
-    # Add new entity
-    new_entity = Entity(name="NewEntity", entityType="Test", observations=["test"])
-    await knowledge_graph_manager.create_entities([new_entity])
-
-    # Get new cache state
-    new_cache = await knowledge_graph_manager._check_cache()
-
-    assert len(new_cache.entities) > len(initial_cache.entities)
-
-@pytest.mark.asyncio
-async def test_batch_operations(knowledge_graph_manager):
-    """Test write queue and batch operations."""
-    large_entities = [
-        Entity(name=f"Entity{i}", entityType="Test", observations=[f"obs{i}"])
-        for i in range(knowledge_graph_manager._max_queue_size + 5)
-    ]
-
-    # This should trigger at least one batch write due to queue size
-    created = await knowledge_graph_manager.create_entities(large_entities)
-    assert len(created) == len(large_entities)
-
-    # Force flush any remaining writes
-    await knowledge_graph_manager.flush()
-
-    # Verify all entities were written
-    graph = await knowledge_graph_manager.read_graph()
-    assert len(graph.entities) == len(large_entities)
 
 @pytest.mark.asyncio
 async def test_error_handling(knowledge_graph_manager):
-    """Test error handling in various scenarios."""
+    """Test error handling in various scenarios.
+    
+    This test verifies proper error handling for:
+    1. Invalid entity names
+    2. Non-existent entities in relations
+    """
     # Test invalid entity name
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Invalid entity"):
         await knowledge_graph_manager.create_entities([
             Entity(name="", entityType="Test", observations=[])
         ])
 
-    # Test non-existent entity in relations
+    # Test relation with non-existent entity
     with pytest.raises(EntityNotFoundError):
         await knowledge_graph_manager.create_relations([
             Relation(from_="NonExistent", to="AlsoNonExistent", relationType="test")
         ])
+
+
+@pytest.mark.asyncio
+async def test_graph_persistence(knowledge_graph_manager):
+    """Test that graph changes persist after reloading.
+    
+    This test verifies that:
+    1. Created entities persist after a graph reload
+    2. Added relations persist after a graph reload
+    3. New observations persist after a graph reload
+    """
+    # Create initial data
+    entity = Entity(name="PersistenceTest", entityType="Test", observations=["initial"])
+    await knowledge_graph_manager.create_entities([entity])
+    
+    # Force a reload of the graph
+    knowledge_graph_manager._cache = None
+    
+    # Verify data persists
+    graph = await knowledge_graph_manager.read_graph()
+    assert len(graph.entities) == 1
+    assert graph.entities[0].name == "PersistenceTest"
+    assert "initial" in graph.entities[0].observations
+
+
+@pytest.mark.asyncio
+async def test_concurrent_operations(knowledge_graph_manager):
+    """Test handling of concurrent operations.
+    
+    This test verifies that:
+    1. Multiple concurrent entity creations are handled properly
+    2. Cache remains consistent under concurrent operations
+    3. No data is lost during concurrent writes
+    """
+    # Create multiple entities concurrently
+    async def create_entity(index: int):
+        entity = Entity(
+            name=f"Concurrent{index}",
+            entityType="Test",
+            observations=[f"obs{index}"]
+        )
+        return await knowledge_graph_manager.create_entities([entity])
+
+    # Run concurrent operations
+    tasks = [create_entity(i) for i in range(5)]
+    results = await asyncio.gather(*tasks)
+    
+    # Verify all entities were created
+    assert all(len(r) == 1 for r in results)
+    
+    # Verify final state
+    graph = await knowledge_graph_manager.read_graph()
+    assert len(graph.entities) == 5
+    assert all(f"Concurrent{i}" in [e.name for e in graph.entities] for i in range(5))

@@ -23,8 +23,7 @@ from .exceptions import (
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("knowledge-graph-server")
 
@@ -338,35 +337,25 @@ async def async_main():
                 # Convert entities and relations to dictionaries for JSON serialization
                 result = {
                     "entities": [vars(e) for e in graph.entities],
-                    "relations": [r.to_dict() for r in graph.relations]
+                    "relations": [r.to_dict() for r in graph.relations],
                 }
-                return [
-                    types.TextContent(type="text", text=json.dumps(result))
-                ]
+                return [types.TextContent(type="text", text=json.dumps(result))]
 
             elif name == "search_nodes":
                 result = await manager.search_nodes(arguments["query"])
                 graph_dict = {
                     "entities": [vars(e) for e in result.entities],
-                    "relations": [r.to_dict() for r in result.relations]
+                    "relations": [r.to_dict() for r in result.relations],
                 }
-                return [
-                    types.TextContent(
-                        type="text", text=json.dumps(graph_dict)
-                    )
-                ]
+                return [types.TextContent(type="text", text=json.dumps(graph_dict))]
 
             elif name == "open_nodes":
                 result = await manager.open_nodes(arguments["names"])
                 graph_dict = {
                     "entities": [vars(e) for e in result.entities],
-                    "relations": [r.to_dict() for r in result.relations]
+                    "relations": [r.to_dict() for r in result.relations],
                 }
-                return [
-                    types.TextContent(
-                        type="text", text=json.dumps(graph_dict)
-                    )
-                ]
+                return [types.TextContent(type="text", text=json.dumps(graph_dict))]
 
             else:
                 raise ValueError(f"Unknown tool: {name}")
