@@ -69,35 +69,36 @@ async def async_main():
     app = Server("knowledge-graph-server")
 
     @app.list_tools()
-    async def list_tools() -> List[types.Tool]:
-        return [
-            types.Tool(
-                name="create_entities",
-                description="Create multiple new entities in the knowledge graph",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "entities": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "entityType": {"type": "string"},
-                                    "observations": {
-                                        "type": "array",
-                                        "items": {"type": "string"}
-                                    },
-                                },
-                                "required": ["name", "entityType", "observations"]
-                            }
+async def list_tools() -> List[types.Tool]:
+    return [
+        types.Tool(
+            name="create_entities",
+            description="Create multiple new entities in the knowledge graph",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entities": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "entityType": {"type": "string"},
+                                "observations": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                }
+                            },
+                            "required": ["name", "entityType", "observations"],
+                            "additionalProperties": False
                         }
-                    },
-                    "required": ["entities"]
-                }
-            ),
-            # Additional tool definitions remain the same
-        ]
+                    }
+                },
+                "required": ["entities"],
+                "additionalProperties": False
+            }
+        )
+    ]
 
     @app.call_tool()
     async def call_tool(
