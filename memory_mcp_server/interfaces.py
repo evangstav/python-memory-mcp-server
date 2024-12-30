@@ -34,21 +34,26 @@ class Entity:
 
 @dataclass
 class Relation:
-    from_: str  # Using from_ in code but will serialize as 'from'
+    from_: str
     to: str
     relationType: str
 
-    def __init__(self, **kwargs):
-        # Handle both 'from' and 'from_' in input
-        if "from" in kwargs:
-            self.from_ = kwargs["from"]
-        elif "from_" in kwargs:
-            self.from_ = kwargs["from_"]
-        self.to = kwargs["to"]
-        self.relationType = kwargs["relationType"]
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Relation':
+        """Create a Relation instance from a dictionary."""
+        return cls(
+            from_=data.get("from_", data.get("from")),  # Handle both formats
+            to=data["to"],
+            relationType=data["relationType"]
+        )
 
-    def to_dict(self):
-        return {"from": self.from_, "to": self.to, "relationType": self.relationType}
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to API-compatible dictionary format."""
+        return {
+            "from": self.from_,  # Use 'from' for external API
+            "to": self.to,
+            "relationType": self.relationType
+        }
 
 
 @dataclass

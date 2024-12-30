@@ -109,11 +109,11 @@ async def async_main():
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "from_": {"type": "string"},
+                                    "from": {"type": "string"},
                                     "to": {"type": "string"},
                                     "relationType": {"type": "string"}
                                 },
-                                "required": ["from_", "to", "relationType"],
+                                "required": ["from", "to", "relationType"],
                                 "additionalProperties": False
                             }
                         }
@@ -221,11 +221,11 @@ async def async_main():
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "from_": {"type": "string"},
+                                    "from": {"type": "string"},
                                     "to": {"type": "string"},
                                     "relationType": {"type": "string"}
                                 },
-                                "required": ["from_", "to", "relationType"],
+                                "required": ["from", "to", "relationType"],
                                 "additionalProperties": False
                             }
                         }

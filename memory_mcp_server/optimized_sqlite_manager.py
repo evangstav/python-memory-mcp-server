@@ -95,33 +95,42 @@ class OptimizedSQLiteManager:
         conn.commit()
         return created_entities
 
-    async def create_relations(self, relations: List[Relation]) -> List[Relation]:
+    async def create_relations(self, relations_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Create multiple new relations in the database."""
         conn = self._get_connection()
         cursor = conn.cursor()
         created_relations = []
 
-        for relation in relations:
-            # Check if entities exist
-            cursor.execute("SELECT 1 FROM entities WHERE name = ?", (relation.from_,))
-            if not cursor.fetchone():
-                raise EntityNotFoundError(relation.from_)
+        try:
+            for relation_data in relations_data:
+                # Convert dictionary to Relation object
+                relation = Relation.from_dict(relation_data)
                 
-            cursor.execute("SELECT 1 FROM entities WHERE name = ?", (relation.to,))
-            if not cursor.fetchone():
-                raise EntityNotFoundError(relation.to)
+                # Verify both entities exist
+                cursor.execute("SELECT 1 FROM entities WHERE name = ?", (relation.from_,))
+                if not cursor.fetchone():
+                    raise EntityNotFoundError(relation.from_)
+                
+                cursor.execute("SELECT 1 FROM entities WHERE name = ?", (relation.to,))
+                if not cursor.fetchone():
+                    raise EntityNotFoundError(relation.to)
 
-            try:
-                cursor.execute(
-                    "INSERT INTO relations (from_entity, to_entity, relation_type) VALUES (?, ?, ?)",
-                    (relation.from_, relation.to, relation.relationType)
-                )
-                created_relations.append(relation)
-            except sqlite3.IntegrityError:
-                continue  # Skip duplicate relations
+                # Insert relation
+                cursor.execute("""
+                    INSERT INTO relations (from_entity, to_entity, relation_type) 
+                    VALUES (?, ?, ?)
+                    ON CONFLICT DO NOTHING
+                """, (relation.from_, relation.to, relation.relationType))
+                
+                if cursor.rowcount > 0:
+                    created_relations.append(relation.to_dict())
 
-        conn.commit()
-        return created_relations
+            conn.commit()
+            return created_relations
+            
+        except Exception as e:
+            conn.rollback()
+            raise e
 
     async def read_graph(self) -> Dict[str, List[Dict[str, Any]]]:
         """Read the entire graph and return serializable format."""
@@ -229,9 +238,11 @@ class OptimizedSQLiteManager:
         cursor = conn.cursor()
 
         for relation in relations:
+            # Convert dictionary to Relation object for consistent handling
+            relation_obj = Relation.from_dict(relation)
             cursor.execute(
                 "DELETE FROM relations WHERE from_entity = ? AND to_entity = ? AND relation_type = ?",
-                (relation["from_"], relation["to"], relation["relationType"])
+                (relation_obj.from_, relation_obj.to, relation_obj.relationType)
             )
 
         conn.commit()
