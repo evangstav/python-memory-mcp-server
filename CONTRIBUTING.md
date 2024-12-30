@@ -4,7 +4,7 @@ Thank you for your interest in contributing to the Memory MCP Server! This docum
 
 ## Project Overview
 
-The Memory MCP Server is an implementation of the Model Context Protocol (MCP) that provides Claude with a persistent knowledge graph capability. The server manages entities and relations in a graph structure, with features like caching, indexing, and atomic file operations.
+The Memory MCP Server is an implementation of the Model Context Protocol (MCP) that provides Claude with a persistent knowledge graph capability. The server manages entities and relations in a graph structure, supporting multiple backend storage options with features like caching, indexing, and atomic operations.
 
 ### Key Components
 
@@ -13,14 +13,20 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - `Relation`: Edges between entities with relation types
    - `KnowledgeGraph`: Container for entities and relations
 
-2. **Knowledge Graph Manager**
-   - Handles persistent storage in JSONL format
+2. **Backend System**
+   - `Backend`: Abstract interface defining storage operations
+   - `JsonlBackend`: File-based storage using JSONL format
+   - `Neo4jBackend`: Graph database storage using Neo4j
+   - Extensible design for adding new backends
+
+3. **Knowledge Graph Manager**
+   - Backend-agnostic manager layer
    - Implements caching with TTL
    - Provides indexing for fast lookups
-   - Ensures atomic file operations
+   - Ensures atomic operations
    - Manages CRUD operations for entities and relations
 
-3. **MCP Server Implementation**
+4. **MCP Server Implementation**
    - Exposes tools for graph manipulation
    - Handles serialization/deserialization
    - Provides error handling and logging
@@ -43,6 +49,8 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 1. **Prerequisites**
    - Python 3.12 or higher
    - uv package manager
+   - Docker (for Neo4j testing)
+   - Neo4j (for Neo4j backend development)
 
 2. **Setup Development Environment**
    ```bash
@@ -54,11 +62,11 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    uv venv
    source .venv/bin/activate
 
-   # Install dependencies including test dependencies
-   uv pip install -e ".[test]"  # This will install pytest, pytest-asyncio, pytest-cov, and pytest-mock
+   # Install all dependencies (including test and Neo4j)
+   uv pip install -e ".[test,neo4j]"
    ```
 
-2. **Run Tests**
+3. **Run Tests**
    ```bash
    # Run all tests
    pytest
@@ -66,26 +74,31 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    # Run with coverage report
    pytest --cov=memory_mcp_server
 
-   # Run specific test file
-   pytest tests/test_server.py
+   # Run specific backend tests
+   pytest tests/test_backends/test_jsonl.py
+   pytest tests/test_backends/test_neo4j.py
+
+   # Run migration tests
+   pytest tests/test_migration.py
    ```
 
-3. **Run the Server Locally**
+4. **Run the Server Locally**
    ```bash
-   # Using the installed command (uses default memory.jsonl in package directory)
-   memory-mcp-server
-
-   # Specify custom memory file location
+   # Using JSONL backend (default)
    memory-mcp-server --path /path/to/memory.jsonl
 
-   # Or using the module directly
-   python -m memory_mcp_server --path /path/to/memory.jsonl
+   # Using Neo4j backend
+   memory-mcp-server --backend neo4j \
+     --neo4j-uri "neo4j://localhost:7687" \
+     --neo4j-user "neo4j" \
+     --neo4j-password "password"
+
+   # Using environment variables for Neo4j
+   export NEO4J_URI="neo4j://localhost:7687"
+   export NEO4J_USER="neo4j"
+   export NEO4J_PASSWORD="password"
+   memory-mcp-server --backend neo4j
    ```
-
-   The server accepts the following arguments:
-   - `--path`: Path to the memory file (default: memory.jsonl in package directory)
-
-   The server runs on stdio for MCP communication, making it compatible with any MCP client.
 
 ## Development Guidelines
 
@@ -99,14 +112,17 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 2. **Project-Specific Conventions**
    - Use async/await for I/O operations
    - Implement proper error handling with custom exceptions
-   - Maintain atomic file operations for data persistence
+   - Maintain atomic operations for data persistence
    - Add appropriate logging statements
+   - Follow backend interface for new implementations
 
 ### Testing
 
 1. **Test Structure**
    - Tests use pytest with pytest-asyncio for async testing
    - Test files must follow pattern `test_*.py` in the `tests/` directory
+   - Backend-specific tests in `tests/test_backends/`
+   - Migration tests in `tests/test_migration.py`
    - Async tests are automatically detected (asyncio_mode = "auto")
    - Test fixtures use function-level event loop scope
 
@@ -118,7 +134,9 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 
 3. **Test Categories**
    - Unit tests for individual components
+   - Backend-specific tests for storage implementations
    - Integration tests for MCP server functionality
+   - Migration tests for data transfer
    - Performance tests for operations on large graphs
    - Async tests for I/O operations and concurrency
 
@@ -130,22 +148,66 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 
 ### Adding New Features
 
-1. **Knowledge Graph Operations**
-   - Implement new operations in `KnowledgeGraphManager`
-   - Add appropriate indices if needed
+1. **New Backend Implementation**
+   - Create new class implementing `Backend` interface
+   - Implement all required methods
+   - Add backend-specific configuration options
+   - Create comprehensive tests
+   - Update documentation and CLI
+
+2. **Knowledge Graph Operations**
+   - Implement operations in backend classes
+   - Update KnowledgeGraphManager if needed
+   - Add appropriate indices
    - Ensure atomic operations
    - Add validation and error handling
 
-2. **MCP Tools**
+3. **MCP Tools**
    - Define tool schema in `main.py`
    - Implement tool handler function
    - Add to `TOOLS` dictionary
    - Include appropriate error handling
 
-3. **Performance Considerations**
-   - Consider caching implications
+4. **Performance Considerations**
+   - Consider backend-specific optimizations
+   - Implement efficient caching strategies
    - Optimize for large graphs
    - Handle memory efficiently
+
+### Adding a New Backend
+
+1. Create new backend class:
+   ```python
+   from .base import Backend
+
+   class NewBackend(Backend):
+       def __init__(self, config_params):
+           self.config = config_params
+
+       async def initialize(self) -> None:
+           # Setup connection, create indices, etc.
+           pass
+
+       async def create_entities(self, entities: List[Entity]) -> List[Entity]:
+           # Implementation
+           pass
+
+       # Implement other required methods...
+   ```
+
+2. Add backend tests:
+   ```python
+   # tests/test_backends/test_new_backend.py
+   @pytest.mark.asyncio
+   async def test_new_backend_operations():
+       backend = NewBackend(test_config)
+       await backend.initialize()
+       # Test implementations
+   ```
+
+3. Update CLI and configuration
+
+4. Add migration support if needed
 
 ## Pull Request Process
 
@@ -166,82 +228,35 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Keep changes focused and atomic
    - Ensure CI checks pass
 
-## Common Development Tasks
-
-### Adding a New Tool
-
-1. Define the tool schema in `list_tools()`:
-   ```python
-   types.Tool(
-       name="new_tool_name",
-       description="Description of what the tool does",
-       inputSchema={
-           "type": "object",
-           "properties": {
-               "param1": {
-                   "type": "string",
-                   "description": "Description of param1"
-               }
-           },
-           "required": ["param1"]
-       }
-   )
-   ```
-
-2. Implement the tool handler:
-   ```python
-   async def tool_new_tool_name(
-       manager: KnowledgeGraphManager,
-       arguments: Dict[str, Any]
-   ) -> List[types.TextContent]:
-       # Implementation
-       return [types.TextContent(type="text", text="result")]
-   ```
-
-3. Add to `TOOLS` dictionary:
-   ```python
-   TOOLS = {
-       ...,
-       "new_tool_name": tool_new_tool_name
-   }
-   ```
-
-### Adding New Graph Operations
-
-1. Add method to `KnowledgeGraphManager`:
-   ```python
-   async def new_operation(self, params):
-       async with self._write_lock:  # If modifying graph
-           graph = await self._check_cache()
-           # Implementation
-           self._dirty = True  # If graph was modified
-           await self._save_graph(graph)
-   ```
-
-2. Add appropriate tests in `tests/test_knowledge_graph_manager.py`
-
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Cache Inconsistency**
+1. **Backend-Specific Issues**
+   - JSONL Backend:
+     - Check file permissions
+     - Verify atomic write operations
+     - Monitor temp file cleanup
+   - Neo4j Backend:
+     - Check connection settings
+     - Verify Neo4j version compatibility
+     - Monitor memory usage
+
+2. **Cache Inconsistency**
    - Check cache TTL settings
    - Verify dirty flag handling
    - Ensure proper lock usage
 
-2. **File Operations**
-   - Check file permissions
-   - Verify atomic write operations
-   - Monitor temp file cleanup
-
 3. **Performance Issues**
-   - Review indexing strategy
+   - Review backend-specific indexing
    - Check cache effectiveness
    - Profile large operations
+   - Consider backend scaling options
 
 ## Additional Resources
 
 - [Model Context Protocol Documentation](https://github.com/ModelContext/protocol)
+- [Neo4j Python Driver Documentation](https://neo4j.com/docs/python-manual/current/)
 - [Python asyncio Documentation](https://docs.python.org/3/library/asyncio.html)
 - [Python Type Hints](https://docs.python.org/3/library/typing.html)
 
