@@ -148,6 +148,131 @@ class OptimizedSQLiteManager:
 
         return {"entities": entities, "relations": relations}
 
+    async def add_observations(self, observations: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+        """Add new observations to existing entities."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        added_observations = {}
+
+        for obs in observations:
+            entity_name = obs["entityName"]
+            new_contents = obs["contents"]
+
+            # Check if entity exists
+            cursor.execute("SELECT observations FROM entities WHERE name = ?", (entity_name,))
+            result = cursor.fetchone()
+            if not result:
+                raise EntityNotFoundError(entity_name)
+
+            # Get current observations and add new ones
+            current_obs = result['observations'].split(',') if result['observations'] else []
+            current_obs.extend(new_contents)
+            
+            # Update entity with new observations
+            cursor.execute(
+                "UPDATE entities SET observations = ? WHERE name = ?",
+                (','.join(current_obs), entity_name)
+            )
+            added_observations[entity_name] = new_contents
+
+        conn.commit()
+        return added_observations
+
+    async def delete_entities(self, entityNames: List[str]) -> None:
+        """Remove entities and their relations."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        for name in entityNames:
+            # Delete relations involving the entity
+            cursor.execute(
+                "DELETE FROM relations WHERE from_entity = ? OR to_entity = ?",
+                (name, name)
+            )
+            # Delete the entity
+            cursor.execute("DELETE FROM entities WHERE name = ?", (name,))
+
+        conn.commit()
+
+    async def delete_observations(self, deletions: List[Dict[str, Any]]) -> None:
+        """Remove specific observations from entities."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        for deletion in deletions:
+            entity_name = deletion["entityName"]
+            to_delete = set(deletion["observations"])
+
+            # Get current observations
+            cursor.execute("SELECT observations FROM entities WHERE name = ?", (entity_name,))
+            result = cursor.fetchone()
+            if result:
+                current_obs = result['observations'].split(',') if result['observations'] else []
+                # Remove specified observations
+                updated_obs = [obs for obs in current_obs if obs not in to_delete]
+                
+                # Update entity with remaining observations
+                cursor.execute(
+                    "UPDATE entities SET observations = ? WHERE name = ?",
+                    (','.join(updated_obs), entity_name)
+                )
+
+        conn.commit()
+
+    async def delete_relations(self, relations: List[Dict[str, Any]]) -> None:
+        """Remove specific relations from the graph."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        for relation in relations:
+            cursor.execute(
+                "DELETE FROM relations WHERE from_entity = ? AND to_entity = ? AND relation_type = ?",
+                (relation["from_"], relation["to"], relation["relationType"])
+            )
+
+        conn.commit()
+
+    async def open_nodes(self, names: List[str]) -> Dict[str, List]:
+        """Retrieve specific nodes by name and their relations."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Get requested entities
+        placeholders = ','.join('?' * len(names))
+        cursor.execute(
+            f"SELECT * FROM entities WHERE name IN ({placeholders})",
+            names
+        )
+        
+        entities = []
+        for row in cursor.fetchall():
+            entities.append(Entity(
+                name=row['name'],
+                entityType=row['entity_type'],
+                observations=row['observations'].split(',') if row['observations'] else []
+            ))
+
+        # Get relations between requested entities
+        cursor.execute(
+            f"""
+            SELECT * FROM relations 
+            WHERE from_entity IN ({placeholders})
+            AND to_entity IN ({placeholders})
+            """,
+            names * 2
+        )
+
+        relations = [
+            Relation(
+                from_=row['from_entity'],
+                to=row['to_entity'],
+                relationType=row['relation_type']
+            )
+            for row in cursor.fetchall()
+        ]
+
+        return {"entities": entities, "relations": relations}
+
     async def search_nodes(self, query: str) -> Dict[str, List]:
         """Search for entities and relations containing the query string."""
         if not query:

@@ -97,6 +97,157 @@ async def async_main():
                     "required": ["entities"],
                     "additionalProperties": False
                 }
+            ),
+            types.Tool(
+                name="create_relations",
+                description="Create multiple new relations between entities",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "relations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "from_": {"type": "string"},
+                                    "to": {"type": "string"},
+                                    "relationType": {"type": "string"}
+                                },
+                                "required": ["from_", "to", "relationType"],
+                                "additionalProperties": False
+                            }
+                        }
+                    },
+                    "required": ["relations"],
+                    "additionalProperties": False
+                }
+            ),
+            types.Tool(
+                name="read_graph",
+                description="Read the entire knowledge graph",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False
+                }
+            ),
+            types.Tool(
+                name="search_nodes",
+                description="Search for nodes based on query",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"}
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False
+                }
+            ),
+            types.Tool(
+                name="add_observations",
+                description="Add new observations to existing entities",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "observations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "entityName": {"type": "string"},
+                                    "contents": {
+                                        "type": "array",
+                                        "items": {"type": "string"}
+                                    }
+                                },
+                                "required": ["entityName", "contents"],
+                                "additionalProperties": False
+                            }
+                        }
+                    },
+                    "required": ["observations"],
+                    "additionalProperties": False
+                }
+            ),
+            types.Tool(
+                name="delete_entities",
+                description="Remove entities and their relations",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "entityNames": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    },
+                    "required": ["entityNames"],
+                    "additionalProperties": False
+                }
+            ),
+            types.Tool(
+                name="delete_observations",
+                description="Remove specific observations from entities",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "deletions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "entityName": {"type": "string"},
+                                    "observations": {
+                                        "type": "array",
+                                        "items": {"type": "string"}
+                                    }
+                                },
+                                "required": ["entityName", "observations"],
+                                "additionalProperties": False
+                            }
+                        }
+                    },
+                    "required": ["deletions"],
+                    "additionalProperties": False
+                }
+            ),
+            types.Tool(
+                name="delete_relations",
+                description="Remove specific relations from the graph",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "relations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "from_": {"type": "string"},
+                                    "to": {"type": "string"},
+                                    "relationType": {"type": "string"}
+                                },
+                                "required": ["from_", "to", "relationType"],
+                                "additionalProperties": False
+                            }
+                        }
+                    },
+                    "required": ["relations"],
+                    "additionalProperties": False
+                }
+            ),
+            types.Tool(
+                name="open_nodes",
+                description="Retrieve specific nodes by name",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "names": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    },
+                    "required": ["names"],
+                    "additionalProperties": False
+                }
             )
         ]
 
