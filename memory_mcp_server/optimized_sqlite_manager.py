@@ -123,8 +123,8 @@ class OptimizedSQLiteManager:
         conn.commit()
         return created_relations
 
-    async def read_graph(self) -> Dict[str, List]:
-        """Read the entire graph from the database."""
+    async def read_graph(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Read the entire graph and return serializable format."""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -132,21 +132,23 @@ class OptimizedSQLiteManager:
         cursor.execute("SELECT * FROM entities")
         entities = []
         for row in cursor.fetchall():
-            entities.append(Entity(
+            entity = Entity(
                 name=row['name'],
                 entityType=row['entity_type'],
                 observations=row['observations'].split(',') if row['observations'] else []
-            ))
+            )
+            entities.append(entity.to_dict())
 
         # Get all relations
         cursor.execute("SELECT * FROM relations")
         relations = []
         for row in cursor.fetchall():
-            relations.append(Relation(
+            relation = Relation(
                 from_=row['from_entity'],
                 to=row['to_entity'],
                 relationType=row['relation_type']
-            ))
+            )
+            relations.append(relation.to_dict())
 
         return {"entities": entities, "relations": relations}
 
@@ -234,8 +236,8 @@ class OptimizedSQLiteManager:
 
         conn.commit()
 
-    async def open_nodes(self, names: List[str]) -> Dict[str, List]:
-        """Retrieve specific nodes by name and their relations."""
+    async def open_nodes(self, names: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Retrieve specific nodes by name and their relations in serializable format."""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -248,11 +250,12 @@ class OptimizedSQLiteManager:
         
         entities = []
         for row in cursor.fetchall():
-            entities.append(Entity(
+            entity = Entity(
                 name=row['name'],
                 entityType=row['entity_type'],
                 observations=row['observations'].split(',') if row['observations'] else []
-            ))
+            )
+            entities.append(entity.to_dict())
 
         # Get relations between requested entities
         cursor.execute(
@@ -264,19 +267,19 @@ class OptimizedSQLiteManager:
             names * 2
         )
 
-        relations = [
-            Relation(
+        relations = []
+        for row in cursor.fetchall():
+            relation = Relation(
                 from_=row['from_entity'],
                 to=row['to_entity'],
                 relationType=row['relation_type']
             )
-            for row in cursor.fetchall()
-        ]
+            relations.append(relation.to_dict())
 
         return {"entities": entities, "relations": relations}
 
-    async def search_nodes(self, query: str) -> Dict[str, List]:
-        """Search for entities and relations containing the query string."""
+    async def search_nodes(self, query: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Search for nodes and return serializable format."""
         if not query:
             raise ValueError("Search query cannot be empty")
 
@@ -300,7 +303,7 @@ class OptimizedSQLiteManager:
                 entityType=row['entity_type'],
                 observations=row['observations'].split(',') if row['observations'] else []
             )
-            entities.append(entity)
+            entities.append(entity.to_dict())
             entity_names.add(entity.name)
 
         # Get related relations
@@ -313,13 +316,13 @@ class OptimizedSQLiteManager:
             ','.join('?' * len(entity_names))
         ), list(entity_names) * 2)
 
-        relations = [
-            Relation(
+        relations = []
+        for row in cursor.fetchall():
+            relation = Relation(
                 from_=row['from_entity'],
                 to=row['to_entity'],
                 relationType=row['relation_type']
             )
-            for row in cursor.fetchall()
-        ]
+            relations.append(relation.to_dict())
 
         return {"entities": entities, "relations": relations}
