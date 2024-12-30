@@ -88,8 +88,14 @@ class KnowledgeGraphManager:
         Validate the fields of an entity.
         Raises ValueError if invalid.
         """
-        if not entity.name or not entity.entityType:
-            raise ValueError(f"Invalid entity: {entity}")
+        if not entity.name or not isinstance(entity.name, str):
+            raise ValueError("Entity name must be a non-empty string")
+        if not entity.entityType or not isinstance(entity.entityType, str):
+            raise ValueError("Entity type must be a non-empty string")
+        if not isinstance(entity.observations, (list, tuple)):
+            raise ValueError("Observations must be a list or tuple")
+        if any(not isinstance(obs, str) for obs in entity.observations):
+            raise ValueError("All observations must be strings")
 
     def _validate_relation(self, relation: Relation) -> None:
         """

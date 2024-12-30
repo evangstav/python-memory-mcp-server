@@ -1,23 +1,43 @@
 class KnowledgeGraphError(Exception):
     """Base exception for all knowledge graph errors."""
+    def __init__(self, message: str, details: dict = None):
+        super().__init__(message)
+        self.details = details
 
-    pass
+class ErrorResponse:
+    def __init__(self, error: Exception):
+        self.error_type = error.__class__.__name__
+        self.message = str(error)
+        self.details = getattr(error, 'details', None)
+
+    def to_dict(self) -> dict:
+        return {
+            'error': {
+                'type': self.error_type,
+                'message': self.message,
+                'details': self.details
+            }
+        }
 
 
 class EntityNotFoundError(KnowledgeGraphError):
     """Raised when an entity is not found in the graph."""
-
     def __init__(self, entity_name: str):
         self.entity_name = entity_name
-        super().__init__(f"Entity '{entity_name}' not found in the graph")
+        super().__init__(
+            f"Entity '{entity_name}' not found in the graph",
+            details={'entity_name': entity_name}
+        )
 
 
 class EntityAlreadyExistsError(KnowledgeGraphError):
     """Raised when trying to create an entity that already exists."""
-
     def __init__(self, entity_name: str):
         self.entity_name = entity_name
-        super().__init__(f"Entity '{entity_name}' already exists in the graph")
+        super().__init__(
+            f"Entity '{entity_name}' already exists in the graph",
+            details={'entity_name': entity_name}
+        )
 
 
 class RelationValidationError(KnowledgeGraphError):

@@ -4,8 +4,11 @@ import json
 import logging
 import argparse
 import os
+import time
 from typing import List, Dict, Any
 from urllib.parse import urlparse
+from asyncio import Semaphore
+from functools import wraps
 
 import mcp.types as types
 from mcp.server import Server
@@ -251,7 +254,27 @@ async def async_main():
             )
         ]
 
+    def rate_limit(max_requests: int = 100, window_seconds: int = 60):
+        semaphore = Semaphore(max_requests)
+        
+        def decorator(func):
+            @wraps(func)
+            async def wrapper(*args, **kwargs):
+                async with semaphore:
+                    return await func(*args, **kwargs)
+            return wrapper
+        return decorator
+
+    async def health_check() -> Dict[str, Any]:
+        """Check the health of the server and database."""
+        try:
+            await manager.read_graph()
+            return {"status": "healthy", "timestamp": time.time()}
+        except Exception as e:
+            return {"status": "unhealthy", "error": str(e)}
+
     @app.call_tool()
+    @rate_limit()
     async def call_tool(
         name: str,
         arguments: Dict[str, Any]
@@ -265,9 +288,12 @@ async def async_main():
                 )
             ]
         except Exception as e:
-            error_message = f"Error in {name}: {str(e)}"
-            logger.error(error_message, exc_info=True)
-            return [types.TextContent(type="text", text=f"Error: {error_message}")]
+            error_response = ErrorResponse(e)
+            logger.error(f"Error in {name}: {str(e)}", exc_info=True)
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(error_response.to_dict())
+            )]
 
     async with stdio_server() as (read_stream, write_stream):
         logger.info(
