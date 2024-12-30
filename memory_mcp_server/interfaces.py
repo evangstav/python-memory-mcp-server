@@ -16,6 +16,21 @@ class Entity:
             self, "observations", tuple(observations)
         )  # Convert list to tuple
 
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Entity':
+        return cls(
+            name=data["name"],
+            entityType=data["entityType"],
+            observations=data["observations"]
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "entityType": self.entityType,
+            "observations": list(self.observations)  # Convert tuple back to list
+        }
+
 
 @dataclass
 class Relation:

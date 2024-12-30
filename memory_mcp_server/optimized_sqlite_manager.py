@@ -73,19 +73,21 @@ class OptimizedSQLiteManager:
             self._conn.close()
             self._conn = None
 
-    async def create_entities(self, entities: List[Entity]) -> List[Entity]:
+    async def create_entities(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Create multiple new entities in the database."""
         conn = self._get_connection()
         cursor = conn.cursor()
         created_entities = []
 
-        for entity in entities:
+        for entity_data in entities:
+            # Convert dict to Entity object
+            entity = Entity.from_dict(entity_data)
             try:
                 cursor.execute(
                     "INSERT INTO entities (name, entity_type, observations) VALUES (?, ?, ?)",
                     (entity.name, entity.entityType, ','.join(entity.observations))
                 )
-                created_entities.append(entity)
+                created_entities.append(entity.to_dict())
             except sqlite3.IntegrityError:
                 conn.rollback()
                 raise EntityAlreadyExistsError(entity.name)
