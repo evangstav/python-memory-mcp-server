@@ -17,9 +17,13 @@ class OptimizedSQLiteManager:
         if not parsed_url.path:
             raise ValueError("Database path not specified in URL")
             
-        # Convert to absolute path and ensure directory exists
-        self.db_path = str(Path(parsed_url.path.lstrip('/')).absolute())
-        os.makedirs(os.path.dirname(self.db_path) or '.', exist_ok=True)
+        # Handle the database path, supporting both absolute and relative paths
+        path = parsed_url.path.lstrip('/')
+        if '/' in path:  # If path contains directories
+            self.db_path = str(Path(path).absolute())
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        else:  # Simple filename in current directory
+            self.db_path = path
         self.echo = echo
         self._conn: Optional[sqlite3.Connection] = None
 
