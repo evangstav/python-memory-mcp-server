@@ -1,4 +1,3 @@
-# optimized_sqlite_manager.py
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +6,18 @@ from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional, TypeVar, AsyncIterator
 from functools import wraps
 
-from sqlalchemy import create_engine, select, Text
+from sqlalchemy import (
+    create_engine,
+    select,
+    Text,
+    ForeignKey,
+    String,
+    Integer,
+    and_,
+    or_,
+    delete,
+    text
+)
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     AsyncSession,
@@ -21,8 +31,12 @@ from sqlalchemy.orm import (
     relationship
 )
 from sqlalchemy.pool import AsyncAdaptedQueuePool
-from sqlalchemy.sql import text
 from sqlalchemy.exc import IntegrityError
+
+from .exceptions import (
+    EntityNotFoundError,
+    EntityAlreadyExistsError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +49,9 @@ class Base(DeclarativeBase):
 class Entity(Base):
     __tablename__ = 'entities'
     
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True, nullable=False)
-    entityType: Mapped[str] = mapped_column(nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    entityType: Mapped[str] = mapped_column(String, nullable=False)
     observations: Mapped[List[str]] = mapped_column(Text, nullable=False)
     
     # Relationships with cascade delete
@@ -57,10 +71,10 @@ class Entity(Base):
 class Relation(Base):
     __tablename__ = 'relations'
     
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     from_id: Mapped[int] = mapped_column(ForeignKey('entities.id'), nullable=False)
     to_id: Mapped[int] = mapped_column(ForeignKey('entities.id'), nullable=False)
-    relationType: Mapped[str] = mapped_column(nullable=False)
+    relationType: Mapped[str] = mapped_column(String, nullable=False)
     
     from_entity = relationship('Entity', back_populates='from_relations', foreign_keys=[from_id])
     to_entity = relationship('Entity', back_populates='to_relations', foreign_keys=[to_id])
@@ -91,21 +105,14 @@ class OptimizedSQLiteManager:
         max_overflow: int = 10,
         echo: bool = False
     ):
-        """Initialize the SQLite manager with connection pooling.
-        
-        Args:
-            database_url: SQLite connection string
-            pool_size: Size of the connection pool
-            max_overflow: Maximum number of connections that can be created beyond pool_size
-            echo: Enable SQL query logging
-        """
+        """Initialize the SQLite manager with connection pooling."""
         self.engine: AsyncEngine = create_async_engine(
             database_url,
             echo=echo,
             poolclass=AsyncAdaptedQueuePool,
             pool_size=pool_size,
             max_overflow=max_overflow,
-            pool_pre_ping=True  # Enable connection health checks
+            pool_pre_ping=True
         )
         self.async_session = async_sessionmaker(
             self.engine,
@@ -204,6 +211,96 @@ class OptimizedSQLiteManager:
                 for r, fe, te in db_relations
             ]
 
+    @retry_on_error()
+    async def add_observations(self, observations: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Add observations to multiple entities efficiently."""
+        async with self.get_session() as session:
+            # Batch fetch all entities
+            entity_names = {obs['entityName'] for obs in observations}
+            stmt = select(Entity).where(Entity.name.in_(entity_names))
+            result = await session.execute(stmt)
+            entities = {e.name: e for e in result.scalars().all()}
+            
+            updated_entities = []
+            for obs_data in observations:
+                entity = entities.get(obs_data['entityName'])
+                if not entity:
+                    raise EntityNotFoundError(obs_data['entityName'])
+                
+                # Extend observations efficiently
+                entity.observations.extend(obs_data['contents'])
+                updated_entities.append(entity)
+            
+            await session.commit()
+            return {
+                'entities': [
+                    {
+                        'name': e.name,
+                        'entityType': e.entityType,
+                        'observations': e.observations
+                    }
+                    for e in updated_entities
+                ]
+            }
+
+    @retry_on_error()
+    async def delete_entities(self, entity_names: List[str]) -> None:
+        """Delete multiple entities and their relations efficiently."""
+        async with self.get_session() as session:
+            stmt = delete(Entity).where(Entity.name.in_(entity_names))
+            await session.execute(stmt)
+            await session.commit()
+
+    @retry_on_error()
+    async def delete_observations(self, deletions: List[Dict[str, Any]]) -> None:
+        """Delete specific observations from multiple entities efficiently."""
+        async with self.get_session() as session:
+            # Batch fetch affected entities
+            entity_names = {d['entityName'] for d in deletions}
+            stmt = select(Entity).where(Entity.name.in_(entity_names))
+            result = await session.execute(stmt)
+            entities = {e.name: e for e in result.scalars().all()}
+            
+            for deletion in deletions:
+                entity = entities.get(deletion['entityName'])
+                if not entity:
+                    raise EntityNotFoundError(deletion['entityName'])
+                
+                entity.observations = [
+                    obs for obs in entity.observations 
+                    if obs not in deletion['observations']
+                ]
+            
+            await session.commit()
+
+    @retry_on_error()
+    async def delete_relations(self, relations: List[Dict[str, Any]]) -> None:
+        """Delete multiple relations efficiently."""
+        async with self.get_session() as session:
+            # Batch fetch all involved entities
+            entity_names = {r['from'] for r in relations} | {r['to'] for r in relations}
+            stmt = select(Entity).where(Entity.name.in_(entity_names))
+            result = await session.execute(stmt)
+            entities = {e.name: e for e in result.scalars().all()}
+            
+            conditions = []
+            for r in relations:
+                from_entity = entities.get(r['from'])
+                to_entity = entities.get(r['to'])
+                if from_entity and to_entity:
+                    conditions.append(
+                        and_(
+                            Relation.from_id == from_entity.id,
+                            Relation.to_id == to_entity.id,
+                            Relation.relationType == r['relationType']
+                        )
+                    )
+            
+            if conditions:
+                stmt = delete(Relation).where(or_(*conditions))
+                await session.execute(stmt)
+                await session.commit()
+
     async def read_graph(self) -> Dict[str, Any]:
         """Read the entire graph efficiently."""
         async with self.get_session() as session:
@@ -242,9 +339,8 @@ class OptimizedSQLiteManager:
                 ]
             }
 
-    @retry_on_error()
     async def search_nodes(self, query: str) -> Dict[str, Any]:
-        """Optimized search implementation."""
+        """Search for entities and relations containing the query string."""
         if not query:
             raise ValueError("Search query cannot be empty")
             
@@ -260,10 +356,10 @@ class OptimizedSQLiteManager:
             
             result = await session.execute(stmt)
             entities = result.scalars().all()
-            entity_ids = [e.id for e in entities]
             
-            # Fetch related relations
-            if entity_ids:
+            # Fetch related relations if entities were found
+            if entities:
+                entity_ids = [e.id for e in entities]
                 rel_stmt = select(Relation).where(
                     or_(
                         Relation.from_id.in_(entity_ids),
@@ -294,99 +390,6 @@ class OptimizedSQLiteManager:
                 ]
             }
 
-    @retry_on_error()
-    async def add_observations(self, observations: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Add observations to multiple entities efficiently."""
-        async with self.get_session() as session:
-            # Batch fetch all entities
-            entity_names = {obs['entityName'] for obs in observations}
-            stmt = select(Entity).where(Entity.name.in_(entity_names))
-            result = await session.execute(stmt)
-            entities = {e.name: e for e in result.scalars().all()}
-            
-            updated_entities = []
-            for obs_data in observations:
-                entity = entities.get(obs_data['entityName'])
-                if not entity:
-                    raise EntityNotFoundError(obs_data['entityName'])
-                
-                # Extend observations efficiently
-                entity.observations.extend(obs_data['contents'])
-                updated_entities.append(entity)
-            
-            await session.commit()
-            return {
-                'entities': [
-                    {
-                        'name': e.name,
-                        'entityType': e.entityType,
-                        'observations': e.observations
-                    }
-                    for e in updated_entities
-                ]
-            }
-
-    @retry_on_error()
-    async def delete_entities(self, entity_names: List[str]) -> None:
-        """Delete multiple entities and their relations efficiently."""
-        async with self.get_session() as session:
-            # Batch delete with modern SQLAlchemy patterns
-            stmt = delete(Entity).where(Entity.name.in_(entity_names))
-            await session.execute(stmt)
-            await session.commit()
-
-    @retry_on_error()
-    async def delete_observations(self, deletions: List[Dict[str, Any]]) -> None:
-        """Delete specific observations from multiple entities efficiently."""
-        async with self.get_session() as session:
-            # Batch fetch affected entities
-            entity_names = {d['entityName'] for d in deletions}
-            stmt = select(Entity).where(Entity.name.in_(entity_names))
-            result = await session.execute(stmt)
-            entities = {e.name: e for e in result.scalars().all()}
-            
-            for deletion in deletions:
-                entity = entities.get(deletion['entityName'])
-                if not entity:
-                    raise EntityNotFoundError(deletion['entityName'])
-                
-                # Efficiently remove observations while maintaining order
-                entity.observations = [
-                    obs for obs in entity.observations 
-                    if obs not in deletion['observations']
-                ]
-            
-            await session.commit()
-
-    @retry_on_error()
-    async def delete_relations(self, relations: List[Dict[str, Any]]) -> None:
-        """Delete multiple relations efficiently."""
-        async with self.get_session() as session:
-            # Batch fetch all involved entities
-            entity_names = {r['from'] for r in relations} | {r['to'] for r in relations}
-            stmt = select(Entity).where(Entity.name.in_(entity_names))
-            result = await session.execute(stmt)
-            entities = {e.name: e for e in result.scalars().all()}
-            
-            # Build delete conditions
-            conditions = []
-            for r in relations:
-                from_entity = entities.get(r['from'])
-                to_entity = entities.get(r['to'])
-                if from_entity and to_entity:
-                    conditions.append(
-                        and_(
-                            Relation.from_id == from_entity.id,
-                            Relation.to_id == to_entity.id,
-                            Relation.relationType == r['relationType']
-                        )
-                    )
-            
-            if conditions:
-                stmt = delete(Relation).where(or_(*conditions))
-                await session.execute(stmt)
-                await session.commit()
-
     async def open_nodes(self, names: List[str]) -> Dict[str, Any]:
         """Retrieve specific nodes and their relations efficiently."""
         async with self.get_session() as session:
@@ -409,7 +412,6 @@ class OptimizedSQLiteManager:
                 )
             )
             
-            # Wait for both queries to complete
             entity_result, relation_result = await asyncio.gather(
                 entity_task, relation_task
             )
