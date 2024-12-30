@@ -1,5 +1,6 @@
 import sqlite3
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,7 +17,9 @@ class OptimizedSQLiteManager:
         if not parsed_url.path:
             raise ValueError("Database path not specified in URL")
             
-        self.db_path = parsed_url.path.lstrip('/')
+        # Convert to absolute path and ensure directory exists
+        self.db_path = str(Path(parsed_url.path.lstrip('/')).absolute())
+        os.makedirs(os.path.dirname(self.db_path) or '.', exist_ok=True)
         self.echo = echo
         self._conn: Optional[sqlite3.Connection] = None
 
