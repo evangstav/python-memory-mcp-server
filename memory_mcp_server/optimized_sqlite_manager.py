@@ -23,13 +23,17 @@ class OptimizedSQLiteManager:
         if not parsed_url.path:
             raise ValueError("Database path not specified in URL")
             
-        # Handle the database path, supporting both absolute and relative paths
-        path = parsed_url.path.lstrip('/')
-        if '/' in path:  # If path contains directories
-            self.db_path = str(Path(path).absolute())
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        else:  # Simple filename in current directory
-            self.db_path = path
+        # For absolute paths, keep them as is
+        if parsed_url.path.startswith('/'):
+            self.db_path = parsed_url.path
+        else:
+            # For relative paths, handle as before
+            path = parsed_url.path.lstrip('/')
+            if '/' in path:  # If path contains directories
+                self.db_path = str(Path(path).absolute())
+                os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            else:  # Simple filename in current directory
+                self.db_path = path
         self.echo = echo
         self._pool: List[aiosqlite.Connection] = []
         self._pool_size = 5

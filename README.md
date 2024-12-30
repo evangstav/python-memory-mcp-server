@@ -4,21 +4,27 @@ An implementation of the Model Context Protocol (MCP) server for managing Claude
 
 ## Installation
 
-You can install the package using `uv`:
+You can install the package using Python:
+
+```bash
+python -m pip install git+https://github.com/estav/python-memory-mcp-server.git
+```
+
+Or using `uv`:
 
 ```bash
 uvx memory-mcp-server
 ```
 
-Or install it from the repository:
-
-```bash
-uv pip install git+https://github.com/estav/python-memory-mcp-server.git
-```
-
 ## Usage
 
-Once installed, you can run the server using:
+Once installed, you can run the server using Python:
+
+```bash
+python -m memory_mcp_server
+```
+
+Or with `uv`:
 
 ```bash
 uvx memory-mcp-server
@@ -27,19 +33,37 @@ uvx memory-mcp-server
 ### Configuration
 
 The server expects certain environment variables to be set:
-- `DATABASE_URL`: SQLite database URL for storing the knowledge graph
-- Add any other configuration variables here...
+- `DATABASE_URL`: SQLite database URL for storing the knowledge graph. Supports both absolute paths (e.g., `sqlite:////home/jdoe/claude.db`) and relative paths (e.g., `sqlite:///memory.db`)
 
 ### Integration with Claude Desktop
 
 To use this MCP server with Claude Desktop, add the following to your `claude_desktop_config.json`:
 
+Using Python:
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "python",
+      "args": ["-m", "memory_mcp_server"],
+      "env": {
+        "DATABASE_URL": "sqlite:////home/jdoe/claude.db"
+      }
+    }
+  }
+}
+```
+
+Using `uv`:
 ```json
 {
   "mcpServers": {
     "memory": {
       "command": "uvx",
-      "args": ["memory-mcp-server"]
+      "args": ["memory-mcp-server"],
+      "env": {
+        "DATABASE_URL": "sqlite:///memory.db"
+      }
     }
   }
 }
