@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Any
 
 
 @dataclass(frozen=True)  # Make it hashable by adding frozen=True
