@@ -28,20 +28,16 @@ logger = logging.getLogger("knowledge-graph-server")
 def parse_database_config() -> Dict[str, Any]:
     """Parse database configuration from environment variables."""
     return {
-        "database_url": os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///memory.db"),
-        "pool_size": int(os.environ.get("POOL_SIZE", "5")),
-        "max_overflow": int(os.environ.get("MAX_OVERFLOW", "10")),
-        "pool_timeout": int(os.environ.get("POOL_TIMEOUT", "30")),
-        "pool_recycle": int(os.environ.get("POOL_RECYCLE", "3600")),
+        "database_url": os.environ.get("DATABASE_URL", "sqlite:///memory.db"),
         "echo": os.environ.get("SQL_ECHO", "").lower() == "true"
     }
 
 def validate_database_url(url: str) -> None:
     """Validate the database URL format."""
     parsed = urlparse(url)
-    if parsed.scheme not in ["sqlite+aiosqlite"]:
+    if parsed.scheme not in ["sqlite"]:
         raise ValueError(
-            "Invalid database URL scheme. Must be 'sqlite+aiosqlite'"
+            "Invalid database URL scheme. Must be 'sqlite'"
         )
 
 async def async_main():
@@ -64,8 +60,6 @@ async def async_main():
     # Initialize the optimized SQLite manager
     manager = OptimizedSQLiteManager(
         database_url=config["database_url"],
-        pool_size=config["pool_size"],
-        max_overflow=config["max_overflow"],
         echo=config["echo"]
     )
 
