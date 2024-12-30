@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import argparse
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Callable, Awaitable
 
@@ -12,6 +13,9 @@ from mcp.server.stdio import stdio_server
 
 from .knowledge_graph_manager import KnowledgeGraphManager
 from .interfaces import Relation, Entity, KnowledgeGraph
+from .backends.base import Backend
+from .backends.jsonl import JsonlBackend
+from .backends.neo4j import Neo4jBackend
 from .exceptions import (
     KnowledgeGraphError,
     EntityNotFoundError,
@@ -96,7 +100,6 @@ async def tool_create_relations(
 async def tool_add_observations(
     manager: KnowledgeGraphManager, arguments: Dict[str, Any]
 ) -> List[types.TextContent]:
-    # arguments["observations"] is expected to be a list of {"entityName": str, "contents": List[str]}
     result = await manager.add_observations(arguments["observations"])
     return [types.TextContent(type="text", text=json.dumps(result))]
 
@@ -111,7 +114,6 @@ async def tool_delete_entities(
 async def tool_delete_observations(
     manager: KnowledgeGraphManager, arguments: Dict[str, Any]
 ) -> List[types.TextContent]:
-    # arguments["deletions"] is expected to be a list of {"entityName": str, "observations": List[str]}
     await manager.delete_observations(arguments["deletions"])
     return [types.TextContent(type="text", text="Observations deleted successfully")]
 
@@ -147,9 +149,7 @@ async def tool_open_nodes(
 
 TOOLS: Dict[
     str,
-    Callable[
-        [KnowledgeGraphManager, Dict[str, Any]], Awaitable[List[types.TextContent]]
-    ],
+    Callable[[KnowledgeGraphManager, Dict[str, Any]], Awaitable[List[types.TextContent]]],
 ] = {
     "create_entities": tool_create_entities,
     "create_relations": tool_create_relations,
@@ -163,237 +163,299 @@ TOOLS: Dict[
 }
 
 
+def create_backend(args: argparse.Namespace) -> Backend:
+    """Create and configure the appropriate backend based on arguments."""
+    if args.backend == "neo4j":
+        # Check for Neo4j configuration
+        uri = args.neo4j_uri or os.getenv("NEO4J_URI")
+        user = args.neo4j_user or os.getenv("NEO4J_USER")
+        password = args.neo4j_password or os.getenv("NEO4J_PASSWORD")
+
+        if not all([uri, user, password]):
+            raise ValueError(
+                "Neo4j configuration required. Provide either command line arguments "
+                "or environment variables (NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)"
+            )
+
+        return Neo4jBackend(uri=uri, user=user, password=password)
+    else:
+        return JsonlBackend(
+            memory_path=args.path or Path(__file__).parent / "memory.jsonl",
+            cache_ttl=args.cache_ttl
+        )
+
+
 async def async_main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--backend",
+        choices=["jsonl", "neo4j"],
+        default="jsonl",
+        help="Backend type to use (default: jsonl)",
+    )
+    
+    # JSONL backend options
+    parser.add_argument(
         "--path",
         type=Path,
-        default=Path(__file__).parent / "memory.jsonl",
-        help="Path to the memory file",
+        help="Path to the memory file (JSONL backend only)",
     )
+    parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=60,
+        help="Cache TTL in seconds (JSONL backend only, default: 60)",
+    )
+    
+    # Neo4j backend options
+    parser.add_argument(
+        "--neo4j-uri",
+        help="Neo4j connection URI (can also use NEO4J_URI env var)",
+    )
+    parser.add_argument(
+        "--neo4j-user",
+        help="Neo4j username (can also use NEO4J_USER env var)",
+    )
+    parser.add_argument(
+        "--neo4j-password",
+        help="Neo4j password (can also use NEO4J_PASSWORD env var)",
+    )
+    
     args = parser.parse_args()
 
-    manager = KnowledgeGraphManager(args.path)
-    app = Server("knowledge-graph-server")
+    try:
+        backend = create_backend(args)
+        manager = KnowledgeGraphManager(backend)
+        await manager.initialize()
+        
+        app = Server("knowledge-graph-server")
 
-    @app.list_tools()
-    async def list_tools() -> List[types.Tool]:
-        return [
-            types.Tool(
-                name="create_entities",
-                description="Create multiple new entities in the knowledge graph",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "entities": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {
-                                        "type": "string",
-                                        "description": "The name of the entity",
+        @app.list_tools()
+        async def list_tools() -> List[types.Tool]:
+            return [
+                types.Tool(
+                    name="create_entities",
+                    description="Create multiple new entities in the knowledge graph",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "entities": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {
+                                            "type": "string",
+                                            "description": "The name of the entity",
+                                        },
+                                        "entityType": {
+                                            "type": "string",
+                                            "description": "The type of the entity",
+                                        },
+                                        "observations": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "An array of observation contents",
+                                        },
                                     },
-                                    "entityType": {
-                                        "type": "string",
-                                        "description": "The type of the entity",
-                                    },
-                                    "observations": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "An array of observation contents",
-                                    },
+                                    "required": ["name", "entityType", "observations"],
                                 },
-                                "required": ["name", "entityType", "observations"],
-                            },
-                        }
+                            }
+                        },
+                        "required": ["entities"],
                     },
-                    "required": ["entities"],
-                },
-            ),
-            types.Tool(
-                name="create_relations",
-                description="Create multiple new relations between entities in the knowledge graph. Relations should be in active voice",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "relations": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "from": {
-                                        "type": "string",
-                                        "description": "The starting entity",
+                ),
+                types.Tool(
+                    name="create_relations",
+                    description="Create multiple new relations between entities in the knowledge graph. Relations should be in active voice",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "relations": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "from": {
+                                            "type": "string",
+                                            "description": "The starting entity",
+                                        },
+                                        "to": {
+                                            "type": "string",
+                                            "description": "The ending entity",
+                                        },
+                                        "relationType": {
+                                            "type": "string",
+                                            "description": "The type of the relation",
+                                        },
                                     },
-                                    "to": {
-                                        "type": "string",
-                                        "description": "The ending entity",
-                                    },
-                                    "relationType": {
-                                        "type": "string",
-                                        "description": "The type of the relation",
-                                    },
+                                    "required": ["from", "to", "relationType"],
                                 },
-                                "required": ["from", "to", "relationType"],
-                            },
-                        }
+                            }
+                        },
+                        "required": ["relations"],
                     },
-                    "required": ["relations"],
-                },
-            ),
-            types.Tool(
-                name="add_observations",
-                description="Add new observations to existing entities in the knowledge graph",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "observations": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "entityName": {
-                                        "type": "string",
-                                        "description": "The name of the entity",
+                ),
+                types.Tool(
+                    name="add_observations",
+                    description="Add new observations to existing entities in the knowledge graph",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "observations": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "entityName": {
+                                            "type": "string",
+                                            "description": "The name of the entity",
+                                        },
+                                        "contents": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "Observation contents",
+                                        },
                                     },
-                                    "contents": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "Observation contents",
-                                    },
+                                    "required": ["entityName", "contents"],
                                 },
-                                "required": ["entityName", "contents"],
-                            },
-                        }
+                            }
+                        },
+                        "required": ["observations"],
                     },
-                    "required": ["observations"],
-                },
-            ),
-            types.Tool(
-                name="delete_entities",
-                description="Delete multiple entities and their associated relations from the knowledge graph",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "entityNames": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "An array of entity names to delete",
-                        }
+                ),
+                types.Tool(
+                    name="delete_entities",
+                    description="Delete multiple entities and their associated relations from the knowledge graph",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "entityNames": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "An array of entity names to delete",
+                            }
+                        },
+                        "required": ["entityNames"],
                     },
-                    "required": ["entityNames"],
-                },
-            ),
-            types.Tool(
-                name="delete_observations",
-                description="Delete specific observations from entities in the knowledge graph",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "deletions": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "entityName": {
-                                        "type": "string",
-                                        "description": "The name of the entity",
+                ),
+                types.Tool(
+                    name="delete_observations",
+                    description="Delete specific observations from entities in the knowledge graph",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "deletions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "entityName": {
+                                            "type": "string",
+                                            "description": "The name of the entity",
+                                        },
+                                        "observations": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "Observations to delete",
+                                        },
                                     },
-                                    "observations": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "Observations to delete",
-                                    },
+                                    "required": ["entityName", "observations"],
                                 },
-                                "required": ["entityName", "observations"],
-                            },
-                        }
+                            }
+                        },
+                        "required": ["deletions"],
                     },
-                    "required": ["deletions"],
-                },
-            ),
-            types.Tool(
-                name="delete_relations",
-                description="Delete multiple relations from the knowledge graph",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "relations": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "from": {
-                                        "type": "string",
-                                        "description": "The starting entity",
+                ),
+                types.Tool(
+                    name="delete_relations",
+                    description="Delete multiple relations from the knowledge graph",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "relations": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "from": {
+                                            "type": "string",
+                                            "description": "The starting entity",
+                                        },
+                                        "to": {
+                                            "type": "string",
+                                            "description": "The ending entity",
+                                        },
+                                        "relationType": {
+                                            "type": "string",
+                                            "description": "The type of the relation",
+                                        },
                                     },
-                                    "to": {
-                                        "type": "string",
-                                        "description": "The ending entity",
-                                    },
-                                    "relationType": {
-                                        "type": "string",
-                                        "description": "The type of the relation",
-                                    },
+                                    "required": ["from", "to", "relationType"],
                                 },
-                                "required": ["from", "to", "relationType"],
-                            },
-                        }
+                            }
+                        },
+                        "required": ["relations"],
                     },
-                    "required": ["relations"],
-                },
-            ),
-            types.Tool(
-                name="read_graph",
-                description="Read the entire knowledge graph",
-                inputSchema={"type": "object", "properties": {}},
-            ),
-            types.Tool(
-                name="search_nodes",
-                description="Search for nodes in the knowledge graph based on a query",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "The search query"}
+                ),
+                types.Tool(
+                    name="read_graph",
+                    description="Read the entire knowledge graph",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+                types.Tool(
+                    name="search_nodes",
+                    description="Search for nodes in the knowledge graph based on a query",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "The search query"}
+                        },
+                        "required": ["query"],
                     },
-                    "required": ["query"],
-                },
-            ),
-            types.Tool(
-                name="open_nodes",
-                description="Open specific nodes in the knowledge graph by their names",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "names": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Entity names to retrieve",
-                        }
+                ),
+                types.Tool(
+                    name="open_nodes",
+                    description="Open specific nodes in the knowledge graph by their names",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "names": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Entity names to retrieve",
+                            }
+                        },
+                        "required": ["names"],
                     },
-                    "required": ["names"],
-                },
-            ),
-        ]
+                ),
+            ]
 
-    @app.call_tool()
-    async def call_tool(
-        name: str, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
-        try:
-            handler = TOOLS.get(name)
-            if not handler:
-                raise ValueError(f"Unknown tool: {name}")
-            return await handler(manager, arguments)
-        except Exception as e:
-            error_message = handle_error(e)
-            logger.error(f"Error in tool {name}: {error_message}")
-            return [types.TextContent(type="text", text=f"Error: {error_message}")]
+        @app.call_tool()
+        async def call_tool(
+            name: str, arguments: Dict[str, Any]
+        ) -> List[types.TextContent]:
+            try:
+                handler = TOOLS.get(name)
+                if not handler:
+                    raise ValueError(f"Unknown tool: {name}")
+                return await handler(manager, arguments)
+            except Exception as e:
+                error_message = handle_error(e)
+                logger.error(f"Error in tool {name}: {error_message}")
+                return [types.TextContent(type="text", text=f"Error: {error_message}")]
 
-    async with stdio_server() as (read_stream, write_stream):
-        logger.info(f"Knowledge Graph MCP Server running on stdio (file: {args.path})")
-        await app.run(read_stream, write_stream, app.create_initialization_options())
+        async with stdio_server() as (read_stream, write_stream):
+            backend_info = (
+                f"Neo4j ({args.neo4j_uri})"
+                if args.backend == "neo4j"
+                else f"JSONL (file: {args.path})"
+            )
+            logger.info(f"Knowledge Graph MCP Server running on stdio using {backend_info}")
+            await app.run(read_stream, write_stream, app.create_initialization_options())
+    finally:
+        if 'manager' in locals():
+            await manager.close()
 
 
 def main():
