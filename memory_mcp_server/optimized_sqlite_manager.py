@@ -127,14 +127,14 @@ class OptimizedSQLiteManager:
                     
         return created_entities
 
-    async def create_relations(self, relations_data: List[Dict[str, Any]], batch_size: int = 1000) -> List[Dict[str, Any]]:
+    async def create_relations(self, relations: List[Dict[str, Any]], batch_size: int = 1000) -> List[Dict[str, Any]]:
         """Create multiple new relations in the database using batch processing."""
         created_relations = []
         
         async with self._get_connection() as conn:
             async with self._transaction(conn):
-                for i in range(0, len(relations_data), batch_size):
-                    batch = relations_data[i:i + batch_size]
+                for i in range(0, len(relations), batch_size):
+                    batch = relations[i:i + batch_size]
                     relation_objects = [Relation.from_dict(r) for r in batch]
                     
                     # Verify all entities exist before batch insertion

@@ -281,19 +281,14 @@ async def async_main():
     ) -> List[types.TextContent]:
         try:
             result = await getattr(manager, name)(**arguments)
-            return [
-                types.TextContent(
-                    type="text",
-                    text=json.dumps(result) if result is not None else "Operation completed successfully"
-                )
-            ]
-        except Exception as e:
-            error_response = ErrorResponse(e)
-            logger.error(f"Error in {name}: {str(e)}", exc_info=True)
             return [types.TextContent(
                 type="text",
-                text=json.dumps(error_response.to_dict())
+                text=json.dumps(result) if result is not None else "Operation completed successfully"
             )]
+        except Exception as e:
+            error_message = f"Error in {name}: {str(e)}"
+            logger.error(error_message, exc_info=True)
+            return [types.TextContent(type="text", text=error_message)]
 
     async with stdio_server() as (read_stream, write_stream):
         logger.info(

@@ -94,8 +94,6 @@ class KnowledgeGraphManager:
             raise ValueError("Entity type must be a non-empty string")
         if not isinstance(entity.observations, (list, tuple)):
             raise ValueError("Observations must be a list or tuple")
-        if any(not isinstance(obs, str) for obs in entity.observations):
-            raise ValueError("All observations must be strings")
 
     def _validate_relation(self, relation: Relation) -> None:
         """
