@@ -7,7 +7,6 @@ from typing import List, Optional, Union
 from .interfaces import Entity, Relation, KnowledgeGraph
 from .backends.base import Backend
 from .backends.jsonl import JsonlBackend
-from .backends.neo4j import Neo4jBackend
 
 
 class KnowledgeGraphManager:

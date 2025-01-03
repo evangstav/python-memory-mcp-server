@@ -59,3 +59,98 @@ def docker_compose_file(pytestconfig):
 def docker_compose_project_name():
     """Project name for docker-compose to avoid conflicts."""
     return "memory_mcp_test"
+
+
+def is_neo4j_responsive(host, port):
+    """Check if Neo4j is responsive and database is ready."""
+    import neo4j
+    import time
+    try:
+        driver = neo4j.GraphDatabase.driver(
+            f"neo4j://{host}:{port}",
+            auth=("neo4j", "testpassword")
+        )
+        # Try multiple times with exponential backoff
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                with driver.session() as session:
+                    # Check if we can write to the database
+                    result = session.run(
+                        "CREATE (n:TestNode {name: 'test'}) "
+                        "DELETE n "
+                        "RETURN true as success"
+                    )
+                    if result.single()[0]:
+                        driver.close()
+                        return True
+            except Exception:
+                if attempt < max_attempts - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                continue
+        driver.close()
+        return False
+    except Exception:
+        return False
+
+
+@pytest.fixture(scope="session")
+def neo4j_service(docker_ip, docker_services):
+    """Ensure that Neo4j service is up and responsive."""
+    port = docker_services.port_for("neo4j", 7687)
+    docker_services.wait_until_responsive(
+        timeout=60.0,
+        pause=0.1,
+        check=lambda: is_neo4j_responsive(docker_ip, port)
+    )
+    return port
+
+
+@pytest.fixture
+async def neo4j_backend(neo4j_service, docker_ip):
+    """Provide a Neo4j backend connected to test container."""
+    from memory_mcp_server.backends.neo4j import Neo4jBackend
+    
+    backend = Neo4jBackend(
+        uri=f"neo4j://{docker_ip}:{neo4j_service}",
+        username="neo4j",
+        password="testpassword"
+    )
+    await backend.initialize()
+
+    # Clear any existing data
+    await backend._driver.execute_query("MATCH (n) DETACH DELETE n")
+
+    yield backend
+
+    # Cleanup
+    await backend._driver.execute_query("MATCH (n) DETACH DELETE n")
+    await backend.close()
+
+
+@pytest.fixture
+async def neo4j_backend(docker_services):
+    """Provide a Neo4j backend connected to test container."""
+    # Wait for Neo4j to be ready
+    docker_services.wait_until_responsive(
+        timeout=30.0,
+        pause=0.1,
+        check=lambda: docker_services.port_for("neo4j", 7687) is not None,
+    )
+
+    # Create and initialize backend
+    from memory_mcp_server.backends.neo4j import Neo4jBackend
+    backend = Neo4jBackend(
+        uri=f"neo4j://localhost:{docker_services.port_for('neo4j', 7687)}",
+        username="neo4j",
+        password="testpassword"
+    )
+    await backend.initialize()
+
+    # Clear any existing data
+    await backend._driver.execute_query("MATCH (n) DETACH DELETE n")
+
+    yield backend
+
+    # Cleanup
+    await backend.close()

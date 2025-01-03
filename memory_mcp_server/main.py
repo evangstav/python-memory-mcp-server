@@ -15,7 +15,6 @@ from .knowledge_graph_manager import KnowledgeGraphManager
 from .interfaces import Relation, Entity, KnowledgeGraph
 from .backends.base import Backend
 from .backends.jsonl import JsonlBackend
-from .backends.neo4j import Neo4jBackend
 from .exceptions import (
     KnowledgeGraphError,
     EntityNotFoundError,
@@ -164,61 +163,25 @@ TOOLS: Dict[
 
 
 def create_backend(args: argparse.Namespace) -> Backend:
-    """Create and configure the appropriate backend based on arguments."""
-    if args.backend == "neo4j":
-        # Check for Neo4j configuration
-        uri = args.neo4j_uri or os.getenv("NEO4J_URI")
-        user = args.neo4j_user or os.getenv("NEO4J_USER")
-        password = args.neo4j_password or os.getenv("NEO4J_PASSWORD")
-
-        if not all([uri, user, password]):
-            raise ValueError(
-                "Neo4j configuration required. Provide either command line arguments "
-                "or environment variables (NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)"
-            )
-
-        return Neo4jBackend(uri=uri, user=user, password=password)
-    else:
-        return JsonlBackend(
-            memory_path=args.path or Path(__file__).parent / "memory.jsonl",
-            cache_ttl=args.cache_ttl
-        )
+    """Create and configure the JSONL backend based on arguments."""
+    return JsonlBackend(
+        memory_path=args.path or Path(__file__).parent / "memory.jsonl",
+        cache_ttl=args.cache_ttl
+    )
 
 
 async def async_main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--backend",
-        choices=["jsonl", "neo4j"],
-        default="jsonl",
-        help="Backend type to use (default: jsonl)",
-    )
-    
-    # JSONL backend options
-    parser.add_argument(
         "--path",
         type=Path,
-        help="Path to the memory file (JSONL backend only)",
+        help="Path to the memory file",
     )
     parser.add_argument(
         "--cache-ttl",
         type=int,
         default=60,
-        help="Cache TTL in seconds (JSONL backend only, default: 60)",
-    )
-    
-    # Neo4j backend options
-    parser.add_argument(
-        "--neo4j-uri",
-        help="Neo4j connection URI (can also use NEO4J_URI env var)",
-    )
-    parser.add_argument(
-        "--neo4j-user",
-        help="Neo4j username (can also use NEO4J_USER env var)",
-    )
-    parser.add_argument(
-        "--neo4j-password",
-        help="Neo4j password (can also use NEO4J_PASSWORD env var)",
+        help="Cache TTL in seconds (default: 60)",
     )
     
     args = parser.parse_args()
@@ -446,11 +409,7 @@ async def async_main():
                 return [types.TextContent(type="text", text=f"Error: {error_message}")]
 
         async with stdio_server() as (read_stream, write_stream):
-            backend_info = (
-                f"Neo4j ({args.neo4j_uri})"
-                if args.backend == "neo4j"
-                else f"JSONL (file: {args.path})"
-            )
+            backend_info = f"JSONL (file: {args.path})"
             logger.info(f"Knowledge Graph MCP Server running on stdio using {backend_info}")
             await app.run(read_stream, write_stream, app.create_initialization_options())
     finally:

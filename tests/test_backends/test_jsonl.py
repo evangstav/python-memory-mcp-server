@@ -94,7 +94,9 @@ async def test_search_nodes(jsonl_backend):
     assert result.entities[0].name == "test1"
     
     result = await jsonl_backend.search_nodes("office")
-    assert len(result.entities) == 1
+    assert len(result.entities) == 2  # Both "office" entity and entity with "office" in observations
+    assert "office" in {e.name for e in result.entities}
+    assert "test1" in {e.name for e in result.entities}
     assert len(result.relations) == 1
 
 

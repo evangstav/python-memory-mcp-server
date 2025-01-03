@@ -16,7 +16,6 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 2. **Backend System**
    - `Backend`: Abstract interface defining storage operations
    - `JsonlBackend`: File-based storage using JSONL format
-   - `Neo4jBackend`: Graph database storage using Neo4j
    - Extensible design for adding new backends
 
 3. **Knowledge Graph Manager**
@@ -49,8 +48,6 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 1. **Prerequisites**
    - Python 3.12 or higher
    - uv package manager
-   - Docker (for Neo4j testing)
-   - Neo4j (for Neo4j backend development)
 
 2. **Setup Development Environment**
    ```bash
@@ -62,8 +59,8 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    uv venv
    source .venv/bin/activate
 
-   # Install all dependencies (including test and Neo4j)
-   uv pip install -e ".[test,neo4j]"
+   # Install all dependencies (including test)
+   uv pip install -e ".[test]"
    ```
 
 3. **Run Tests**
@@ -76,28 +73,12 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 
    # Run specific backend tests
    pytest tests/test_backends/test_jsonl.py
-   pytest tests/test_backends/test_neo4j.py
-
-   # Run migration tests
-   pytest tests/test_migration.py
    ```
 
 4. **Run the Server Locally**
    ```bash
-   # Using JSONL backend (default)
+   # Using JSONL backend
    memory-mcp-server --path /path/to/memory.jsonl
-
-   # Using Neo4j backend
-   memory-mcp-server --backend neo4j \
-     --neo4j-uri "neo4j://localhost:7687" \
-     --neo4j-user "neo4j" \
-     --neo4j-password "password"
-
-   # Using environment variables for Neo4j
-   export NEO4J_URI="neo4j://localhost:7687"
-   export NEO4J_USER="neo4j"
-   export NEO4J_PASSWORD="password"
-   memory-mcp-server --backend neo4j
    ```
 
 ## Development Guidelines
@@ -122,7 +103,6 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Tests use pytest with pytest-asyncio for async testing
    - Test files must follow pattern `test_*.py` in the `tests/` directory
    - Backend-specific tests in `tests/test_backends/`
-   - Migration tests in `tests/test_migration.py`
    - Async tests are automatically detected (asyncio_mode = "auto")
    - Test fixtures use function-level event loop scope
 
@@ -136,7 +116,6 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Unit tests for individual components
    - Backend-specific tests for storage implementations
    - Integration tests for MCP server functionality
-   - Migration tests for data transfer
    - Performance tests for operations on large graphs
    - Async tests for I/O operations and concurrency
 
@@ -207,8 +186,6 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 
 3. Update CLI and configuration
 
-4. Add migration support if needed
-
 ## Pull Request Process
 
 1. **Before Submitting**
@@ -237,10 +214,6 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
      - Check file permissions
      - Verify atomic write operations
      - Monitor temp file cleanup
-   - Neo4j Backend:
-     - Check connection settings
-     - Verify Neo4j version compatibility
-     - Monitor memory usage
 
 2. **Cache Inconsistency**
    - Check cache TTL settings
@@ -251,12 +224,10 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Review backend-specific indexing
    - Check cache effectiveness
    - Profile large operations
-   - Consider backend scaling options
 
 ## Additional Resources
 
 - [Model Context Protocol Documentation](https://github.com/ModelContext/protocol)
-- [Neo4j Python Driver Documentation](https://neo4j.com/docs/python-manual/current/)
 - [Python asyncio Documentation](https://docs.python.org/3/library/asyncio.html)
 - [Python Type Hints](https://docs.python.org/3/library/typing.html)
 
