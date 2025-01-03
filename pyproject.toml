@@ -1,6 +1,6 @@
 [project]
 name = "memory-mcp-server"
-version = "0.1.2"
+version = "0.1.3"
 description = "MCP server implementation for managing Claude's memory and knowledge graph"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -38,8 +38,8 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "asyncio: mark a test as an async test",
-    "integration: mark a test that requires external services",
+  "asyncio: mark a test as an async test",
+  "integration: mark a test that requires external services",
 ]
 
 [project.optional-dependencies]
