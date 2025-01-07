@@ -3,14 +3,14 @@
 import asyncio
 import json
 import time
-from pathlib import Path
-from typing import List, Dict, Optional
 from collections import defaultdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, cast
 
 import aiofiles
 
-from ..interfaces import Entity, Relation, KnowledgeGraph
 from ..exceptions import EntityNotFoundError, FileAccessError
+from ..interfaces import Entity, KnowledgeGraph, Relation
 from .base import Backend
 
 
@@ -31,7 +31,7 @@ class JsonlBackend(Backend):
         self._dirty = False
         self._write_lock = asyncio.Lock()
         self._lock = asyncio.Lock()
-        self._indices = {
+        self._indices: Dict[str, Any] = {
             "entity_names": {},
             "entity_types": defaultdict(list),
             "relations_from": defaultdict(list),
@@ -97,10 +97,11 @@ class JsonlBackend(Backend):
                         self._cache_timestamp = current_time
                         self._build_indices(graph)
                         self._dirty = False
-                    except Exception as e:
-                        return KnowledgeGraph(entities=[], relations=[])
+                    except Exception:
+                        empty_graph = KnowledgeGraph(entities=[], relations=[])
+                        return empty_graph
 
-        return self._cache
+        return cast(KnowledgeGraph, self._cache)
 
     async def _load_graph_from_file(self) -> KnowledgeGraph:
         """Load the knowledge graph from JSONL file.
@@ -139,11 +140,11 @@ class JsonlBackend(Backend):
                                     relationType=item["relationType"],
                                 )
                             )
-                    except (json.JSONDecodeError, KeyError) as e:
+                    except (json.JSONDecodeError, KeyError):
                         continue
             return graph
-        except Exception as e:
-            raise FileAccessError(f"Error reading file: {str(e)}")
+        except Exception as err:
+            raise FileAccessError(f"Error reading file: {str(err)}") from err
 
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
         """Save the knowledge graph to JSONL file atomically.
@@ -180,8 +181,8 @@ class JsonlBackend(Backend):
                     await f.write(line + "\n")
 
             temp_path.replace(self.memory_path)
-        except Exception as e:
-            raise FileAccessError(f"Error saving file: {str(e)}")
+        except Exception as err:
+            raise FileAccessError(f"Error saving file: {str(err)}") from err
         finally:
             if temp_path.exists():
                 try:
@@ -204,7 +205,7 @@ class JsonlBackend(Backend):
         """
         async with self._write_lock:
             graph = await self._check_cache()
-            existing_entities = self._indices["entity_names"]
+            existing_entities = cast(Dict[str, Entity], self._indices["entity_names"])
             new_entities = []
 
             for entity in entities:
@@ -213,7 +214,9 @@ class JsonlBackend(Backend):
                 if entity.name not in existing_entities:
                     new_entities.append(entity)
                     existing_entities[entity.name] = entity
-                    self._indices["entity_types"][entity.entityType].append(entity)
+                    cast(Dict[str, List[Entity]], self._indices["entity_types"])[
+                        entity.entityType
+                    ].append(entity)
 
             if new_entities:
                 graph.entities.extend(new_entities)
@@ -240,7 +243,7 @@ class JsonlBackend(Backend):
         """
         async with self._write_lock:
             graph = await self._check_cache()
-            existing_entities = self._indices["entity_names"]
+            existing_entities = cast(Dict[str, Entity], self._indices["entity_names"])
             new_relations = []
 
             for relation in relations:
@@ -252,7 +255,9 @@ class JsonlBackend(Backend):
                 if relation.to not in existing_entities:
                     raise EntityNotFoundError(f"Entity not found: {relation.to}")
 
-                existing_from = self._indices["relations_from"].get(relation.from_, [])
+                existing_from = cast(
+                    Dict[str, List[Relation]], self._indices["relations_from"]
+                ).get(relation.from_, [])
                 if not any(
                     r.from_ == relation.from_
                     and r.to == relation.to
@@ -260,8 +265,12 @@ class JsonlBackend(Backend):
                     for r in existing_from
                 ):
                     new_relations.append(relation)
-                    self._indices["relations_from"][relation.from_].append(relation)
-                    self._indices["relations_to"][relation.to].append(relation)
+                    cast(Dict[str, List[Relation]], self._indices["relations_from"])[
+                        relation.from_
+                    ].append(relation)
+                    cast(Dict[str, List[Relation]], self._indices["relations_to"])[
+                        relation.to
+                    ].append(relation)
 
             if new_relations:
                 graph.relations.extend(new_relations)
@@ -316,8 +325,7 @@ class JsonlBackend(Backend):
         ]
 
         return KnowledgeGraph(
-            entities=list(filtered_entities),
-            relations=filtered_relations
+            entities=list(filtered_entities), relations=filtered_relations
         )
 
     async def flush(self) -> None:
@@ -328,3 +336,51 @@ class JsonlBackend(Backend):
                 await self._save_graph(graph)
                 self._dirty = False
                 self._cache_timestamp = time.monotonic()
+
+    async def add_observations(self, entity_name: str, observations: List[str]) -> None:
+        """Add observations to an existing entity.
+
+        Args:
+            entity_name: Name of the entity to add observations to
+            observations: List of observations to add
+
+        Raises:
+            EntityNotFoundError: If entity does not exist
+            ValueError: If observations list is empty
+            FileAccessError: If file operations fail
+        """
+        if not observations:
+            raise ValueError("Observations list cannot be empty")
+
+        async with self._write_lock:
+            graph = await self._check_cache()
+            existing_entities = cast(Dict[str, Entity], self._indices["entity_names"])
+
+            if entity_name not in existing_entities:
+                raise EntityNotFoundError(f"Entity not found: {entity_name}")
+
+            entity = existing_entities[entity_name]
+            # Create new Entity with updated observations since Entity is immutable
+            updated_entity = Entity(
+                name=entity.name,
+                entityType=entity.entityType,
+                observations=list(entity.observations) + observations,
+            )
+
+            # Update entity in graph and indices
+            graph.entities = [
+                updated_entity if e.name == entity_name else e for e in graph.entities
+            ]
+            existing_entities[entity_name] = updated_entity
+
+            # Update entity type index
+            entity_types = cast(Dict[str, List[Entity]], self._indices["entity_types"])
+            entity_types[updated_entity.entityType] = [
+                updated_entity if e.name == entity_name else e
+                for e in entity_types[updated_entity.entityType]
+            ]
+
+            self._dirty = True
+            await self._save_graph(graph)
+            self._dirty = False
+            self._cache_timestamp = time.monotonic()

@@ -1,11 +1,19 @@
-import pytest
+"""Tests for KnowledgeGraphManager."""
+
 import asyncio
-from memory_mcp_server.interfaces import Entity, Relation
+from typing import List
+
+import pytest
+
 from memory_mcp_server.exceptions import EntityNotFoundError
+from memory_mcp_server.interfaces import Entity, Relation
+from memory_mcp_server.knowledge_graph_manager import KnowledgeGraphManager
 
 
-@pytest.mark.asyncio
-async def test_create_entities(knowledge_graph_manager):
+@pytest.mark.asyncio(scope="function")
+async def test_create_entities(
+    knowledge_graph_manager: KnowledgeGraphManager,
+) -> None:
     """Test the creation of new entities in the knowledge graph.
 
     This test verifies that:
@@ -34,8 +42,10 @@ async def test_create_entities(knowledge_graph_manager):
     print("test_create_entities: Complete")
 
 
-@pytest.mark.asyncio
-async def test_create_relations(knowledge_graph_manager):
+@pytest.mark.asyncio(scope="function")
+async def test_create_relations(
+    knowledge_graph_manager: KnowledgeGraphManager,
+) -> None:
     """Test the creation of relations between entities.
 
     This test verifies that:
@@ -63,8 +73,10 @@ async def test_create_relations(knowledge_graph_manager):
     print("test_create_relations: Complete")
 
 
-@pytest.mark.asyncio
-async def test_search_functionality(knowledge_graph_manager):
+@pytest.mark.asyncio(scope="function")
+async def test_search_functionality(
+    knowledge_graph_manager: KnowledgeGraphManager,
+) -> None:
     """Test the search functionality across different criteria.
 
     This test verifies searching by:
@@ -104,8 +116,10 @@ async def test_search_functionality(knowledge_graph_manager):
     assert any(e.name == "DifferentType" for e in obs_result.entities)
 
 
-@pytest.mark.asyncio
-async def test_error_handling(knowledge_graph_manager):
+@pytest.mark.asyncio(scope="function")
+async def test_error_handling(
+    knowledge_graph_manager: KnowledgeGraphManager,
+) -> None:
     """Test error handling in various scenarios.
 
     This test verifies proper error handling for:
@@ -125,8 +139,10 @@ async def test_error_handling(knowledge_graph_manager):
         )
 
 
-@pytest.mark.asyncio
-async def test_graph_persistence(knowledge_graph_manager):
+@pytest.mark.asyncio(scope="function")
+async def test_graph_persistence(
+    knowledge_graph_manager: KnowledgeGraphManager,
+) -> None:
     """Test that graph changes persist after reloading.
 
     This test verifies that:
@@ -138,8 +154,8 @@ async def test_graph_persistence(knowledge_graph_manager):
     entity = Entity(name="PersistenceTest", entityType="Test", observations=["initial"])
     await knowledge_graph_manager.create_entities([entity])
 
-    # Force a reload of the graph
-    knowledge_graph_manager._cache = None
+    # Force a reload of the graph by clearing the cache
+    knowledge_graph_manager._cache = None  # type: ignore
 
     # Verify data persists
     graph = await knowledge_graph_manager.read_graph()
@@ -148,8 +164,10 @@ async def test_graph_persistence(knowledge_graph_manager):
     assert "initial" in graph.entities[0].observations
 
 
-@pytest.mark.asyncio
-async def test_concurrent_operations(knowledge_graph_manager):
+@pytest.mark.asyncio(scope="function")
+async def test_concurrent_operations(
+    knowledge_graph_manager: KnowledgeGraphManager,
+) -> None:
     """Test handling of concurrent operations.
 
     This test verifies that:
@@ -159,9 +177,11 @@ async def test_concurrent_operations(knowledge_graph_manager):
     """
 
     # Create multiple entities concurrently
-    async def create_entity(index: int):
+    async def create_entity(index: int) -> List[Entity]:
         entity = Entity(
-            name=f"Concurrent{index}", entityType="Test", observations=[f"obs{index}"]
+            name=f"Concurrent{index}",
+            entityType="Test",
+            observations=[f"obs{index}"],
         )
         return await knowledge_graph_manager.create_entities([entity])
 

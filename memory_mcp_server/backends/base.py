@@ -1,9 +1,9 @@
 """Backend interface for Memory MCP Server storage implementations."""
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 
-from ..interfaces import Entity, Relation, KnowledgeGraph
+from ..interfaces import Entity, KnowledgeGraph, Relation
 
 
 class Backend(ABC):
@@ -67,4 +67,14 @@ class Backend(ABC):
     @abstractmethod
     async def flush(self) -> None:
         """Ensure all pending changes are persisted to the backend."""
+        pass
+
+    @abstractmethod
+    async def add_observations(self, entity_name: str, observations: List[str]) -> None:
+        """Add observations to an existing entity.
+
+        Args:
+            entity_name: Name of the entity to add observations to
+            observations: List of observations to add
+        """
         pass

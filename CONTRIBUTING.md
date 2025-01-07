@@ -159,6 +159,13 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Ensure atomic operations
    - Add validation and error handling
 
+   Key operations include:
+   - Entity creation/deletion
+   - Relation creation/deletion
+   - Observation management (adding/removing observations to entities)
+   - Graph querying and search
+   - Atomic write operations with locking
+
 3. **MCP Tools**
    - Define tool schema in `main.py`
    - Implement tool handler function

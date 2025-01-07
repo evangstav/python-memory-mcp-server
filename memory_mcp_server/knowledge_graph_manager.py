@@ -2,15 +2,18 @@
 
 import asyncio
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Union
 
-from .interfaces import Entity, Relation, KnowledgeGraph
 from .backends.base import Backend
 from .backends.jsonl import JsonlBackend
+from .interfaces import Entity, KnowledgeGraph, Relation
 
 
 class KnowledgeGraphManager:
     """Manages knowledge graph operations through a configured backend."""
+
+    backend: Backend
+    _write_lock: asyncio.Lock
 
     def __init__(
         self,
@@ -83,3 +86,13 @@ class KnowledgeGraphManager:
     async def flush(self) -> None:
         """Ensure any pending changes are persisted."""
         await self.backend.flush()
+
+    async def add_observations(self, entity_name: str, observations: List[str]) -> None:
+        """Add observations to an existing entity.
+
+        Args:
+            entity_name: Name of the entity to add observations to
+            observations: List of observations to add
+        """
+        async with self._write_lock:
+            await self.backend.add_observations(entity_name, observations)

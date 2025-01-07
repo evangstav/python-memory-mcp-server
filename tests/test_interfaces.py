@@ -1,7 +1,9 @@
-from memory_mcp_server.interfaces import Entity, Relation, KnowledgeGraph
+"""Tests for interface classes."""
+
+from memory_mcp_server.interfaces import Entity, KnowledgeGraph, Relation
 
 
-def test_entity_creation():
+def test_entity_creation() -> None:
     """Test entity creation and attributes."""
     entity = Entity(
         name="TestEntity", entityType="TestType", observations=["obs1", "obs2"]
@@ -13,7 +15,7 @@ def test_entity_creation():
     assert "obs2" in entity.observations
 
 
-def test_relation_creation():
+def test_relation_creation() -> None:
     """Test relation creation and attributes."""
     relation = Relation(from_="EntityA", to="EntityB", relationType="TestRelation")
     assert relation.from_ == "EntityA"
@@ -21,7 +23,7 @@ def test_relation_creation():
     assert relation.relationType == "TestRelation"
 
 
-def test_knowledge_graph_creation():
+def test_knowledge_graph_creation() -> None:
     """Test knowledge graph creation and attributes."""
     entities = [
         Entity(name="E1", entityType="T1", observations=[]),
