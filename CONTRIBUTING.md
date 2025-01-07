@@ -61,6 +61,9 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
 
    # Install all dependencies (including test)
    uv pip install -e ".[test]"
+
+   # Install pre-commit hooks
+   pre-commit install
    ```
 
 3. **Run Tests**
@@ -89,6 +92,7 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Follow PEP 8 style guide
    - Use type hints for function parameters and return values
    - Document classes and functions using docstrings
+   - Maintain 95% or higher docstring coverage
 
 2. **Project-Specific Conventions**
    - Use async/await for I/O operations
@@ -96,6 +100,20 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Maintain atomic operations for data persistence
    - Add appropriate logging statements
    - Follow backend interface for new implementations
+
+### Code Quality Tools
+
+1. **Pre-commit Hooks**
+   - Ruff for linting and formatting
+   - MyPy for static type checking
+   - Interrogate for docstring coverage
+   - Additional checks for common issues
+
+2. **CI/CD Pipeline**
+   - Automated testing
+   - Code coverage reporting
+   - Performance benchmarking
+   - Security scanning
 
 ### Testing
 
@@ -193,6 +211,7 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Add tests for new functionality
    - Update documentation
    - Follow code style guidelines
+   - Run pre-commit hooks
 
 2. **PR Description**
    - Clearly describe the changes

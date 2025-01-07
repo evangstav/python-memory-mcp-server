@@ -1,5 +1,8 @@
 # Memory MCP Server
 
+[![CI](https://github.com/estav/python-memory-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/estav/python-memory-mcp-server/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/estav/python-memory-mcp-server/branch/main/graph/badge.svg)](https://codecov.io/gh/estav/python-memory-mcp-server)
+
 An implementation of the Model Context Protocol (MCP) server for managing Claude's memory and knowledge graph.
 
 ## Installation
@@ -24,7 +27,7 @@ Once installed, you can run the server using:
 uvx memory-mcp-server
 ```
 
-### Usage
+### Configuration
 
 The server uses a JSONL file for storage:
 
@@ -48,13 +51,7 @@ To use this MCP server with Claude Desktop, add the following to your `claude_de
   "mcpServers": {
     "memory": {
       "command": "uvx",
-      "args": ["memory-mcp-server"],
-      "env": {
-        // Optional: Neo4j configuration
-        "NEO4J_URI": "neo4j://localhost:7687",
-        "NEO4J_USER": "neo4j",
-        "NEO4J_PASSWORD": "your-password"
-      }
+      "args": ["memory-mcp-server"]
     }
   }
 }
@@ -75,14 +72,19 @@ source .venv/bin/activate
 uv pip install -e ".[test]"  # Include test dependencies
 ```
 
-3. Run tests:
+3. Install pre-commit hooks:
+```bash
+pre-commit install
+```
+
+4. Run tests:
 ```bash
 pytest                    # Run all tests
 pytest -v                # Run with verbose output
 pytest -v --cov         # Run with coverage report
 ```
 
-4. Run the server locally:
+5. Run the server locally:
 ```bash
 python -m memory_mcp_server  # Run with default memory.jsonl
 ```
@@ -116,6 +118,23 @@ pytest -v
 The `conftest.py` file provides common test fixtures:
 - `temp_jsonl_path`: Creates a temporary JSONL file
 - `knowledge_graph_manager`: Provides a KnowledgeGraphManager instance
+
+## Code Quality
+
+The project uses several tools to maintain code quality:
+
+- **Ruff**: Fast Python linter
+- **MyPy**: Static type checking
+- **Pre-commit hooks**: Automated code quality checks
+- **Interrogate**: Docstring coverage checking
+
+## Contributing
+
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to this project.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a list of changes and version history.
 
 ## License
 
