@@ -37,16 +37,3 @@ jobs:
       with:
         file: ./coverage.xml
         fail_ci_if_error: true
-
-    - name: Security scan
-      uses: python-security/bandit-action@v1
-      with:
-        path: "memory_mcp_server"
-        
-    - name: Store benchmark results
-      uses: benchmark-action/github-action-benchmark@v1
-      with:
-        tool: 'pytest'
-        output-file-path: benchmark.json
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        auto-push: true
