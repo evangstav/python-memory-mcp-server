@@ -125,6 +125,8 @@ async def test_error_handling(
     This test verifies proper error handling for:
     1. Invalid entity names
     2. Non-existent entities in relations
+    3. Empty delete requests
+    4. Deleting non-existent entities
     """
     # Test invalid entity name
     with pytest.raises(ValueError, match="Invalid entity"):
@@ -137,6 +139,14 @@ async def test_error_handling(
         await knowledge_graph_manager.create_relations(
             [Relation(from_="NonExistent", to="AlsoNonExistent", relationType="test")]
         )
+
+    # Test deleting empty list
+    with pytest.raises(ValueError, match="cannot be empty"):
+        await knowledge_graph_manager.delete_entities([])
+
+    # Test deleting non-existent entities
+    result = await knowledge_graph_manager.delete_entities(["nonexistent"])
+    assert result == []
 
 
 @pytest.mark.asyncio(scope="function")
@@ -171,7 +181,7 @@ async def test_concurrent_operations(
     """Test handling of concurrent operations.
 
     This test verifies that:
-    1. Multiple concurrent entity creations are handled properly
+    1. Multiple concurrent entity creations/deletions are handled properly
     2. Cache remains consistent under concurrent operations
     3. No data is lost during concurrent writes
     """
@@ -185,14 +195,31 @@ async def test_concurrent_operations(
         )
         return await knowledge_graph_manager.create_entities([entity])
 
-    # Run concurrent operations
-    tasks = [create_entity(i) for i in range(5)]
-    results = await asyncio.gather(*tasks)
+    # Delete entities concurrently
+    async def delete_entity(index: int) -> List[str]:
+        return await knowledge_graph_manager.delete_entities([f"Concurrent{index}"])
 
-    # Verify all entities were created
-    assert all(len(r) == 1 for r in results)
+    # First create 5 entities
+    create_tasks = [create_entity(i) for i in range(5)]
+    create_results = await asyncio.gather(*create_tasks)
+    assert all(len(r) == 1 for r in create_results)
+
+    # Then concurrently delete 3 of them while creating 2 more
+    delete_tasks = [delete_entity(i) for i in range(3)]
+    create_tasks = [create_entity(i) for i in range(5, 7)]
+    delete_results, create_results = await asyncio.gather(
+        asyncio.gather(*delete_tasks),
+        asyncio.gather(*create_tasks)
+    )
+
+    # Verify deletions
+    assert all(len(r) == 1 for r in delete_results)
+
+    # Verify creations
+    assert all(len(r) == 1 for r in create_results)
 
     # Verify final state
     graph = await knowledge_graph_manager.read_graph()
-    assert len(graph.entities) == 5
-    assert all(f"Concurrent{i}" in [e.name for e in graph.entities] for i in range(5))
+    expected_names = {"Concurrent5", "Concurrent6", "Concurrent3", "Concurrent4"}
+    assert len(graph.entities) == 4
+    assert all(e.name in expected_names for e in graph.entities)

@@ -231,3 +231,38 @@ async def test_duplicate_relations(jsonl_backend: JsonlBackend) -> None:
     # Verify only one relation exists
     graph = await jsonl_backend.read_graph()
     assert len(graph.relations) == 1
+
+
+@pytest.mark.asyncio(scope="function")
+async def test_delete_entities(jsonl_backend: JsonlBackend) -> None:
+    """Test deleting entities and related relations."""
+    # Create test data
+    entities = [
+        Entity("test1", "person", ["obs1"]),
+        Entity("test2", "location", ["obs2"]),
+    ]
+    await jsonl_backend.create_entities(entities)
+    
+    relations = [
+        Relation(from_="test1", to="test2", relationType="visits"),
+        Relation(from_="test2", to="test1", relationType="hosts")
+    ]
+    await jsonl_backend.create_relations(relations)
+
+    # Delete one entity
+    deleted = await jsonl_backend.delete_entities(["test1"])
+    assert deleted == ["test1"]
+
+    # Verify entity removal and relation cleanup
+    graph = await jsonl_backend.read_graph()
+    assert len(graph.entities) == 1
+    assert len(graph.relations) == 0
+    assert "test2" in [e.name for e in graph.entities]
+
+    # Verify cache consistency
+    graph2 = await jsonl_backend.read_graph()
+    assert graph is graph2  # Should return same cached object
+
+    # Test deleting non-existent entity
+    deleted = await jsonl_backend.delete_entities(["nonexistent"])
+    assert deleted == []
