@@ -52,6 +52,9 @@ class KnowledgeGraphManager:
         async with self._write_lock:
             return await self.backend.create_entities(entities)
 
+    async def delete_entities(self, entity_names: List[str]) -> List[str]:
+        # implent this method AI!
+
     async def create_relations(self, relations: List[Relation]) -> List[Relation]:
         """Create multiple new relations.
 
