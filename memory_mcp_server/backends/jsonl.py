@@ -227,6 +227,8 @@ class JsonlBackend(Backend):
 
             return new_entities
 
+    # implement delete_entities AI!
+
     async def create_relations(self, relations: List[Relation]) -> List[Relation]:
         """Create multiple new relations.
 
