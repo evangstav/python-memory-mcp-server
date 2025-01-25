@@ -60,9 +60,26 @@ class KnowledgeGraphManager:
 
         Returns:
             List of successfully deleted entity names
+
+        Raises:
+            EntityNotFoundError: If any entity is not found in the graph
+            FileAccessError: If there are file system issues (backend specific)
         """
         async with self._write_lock:
             return await self.backend.delete_entities(entity_names)
+
+    async def delete_relations(self, from_: str, to: str) -> None:
+        """Delete relations between two entities.
+        
+        Args:
+            from_: Source entity name
+            to: Target entity name
+            
+        Raises:
+            EntityNotFoundError: If either entity is not found
+        """
+        async with self._write_lock:
+            return await self.backend.delete_relations(from_, to)
 
     async def create_relations(self, relations: List[Relation]) -> List[Relation]:
         """Create multiple new relations.
@@ -92,6 +109,9 @@ class KnowledgeGraphManager:
 
         Returns:
             KnowledgeGraph containing matches
+
+        Raises:
+            ValueError: If query is empty
         """
         return await self.backend.search_nodes(query)
 
@@ -105,6 +125,10 @@ class KnowledgeGraphManager:
         Args:
             entity_name: Name of the entity to add observations to
             observations: List of observations to add
+
+        Raises:
+            EntityNotFoundError: If the entity is not found
+            ValueError: If observations list is empty
         """
         async with self._write_lock:
             await self.backend.add_observations(entity_name, observations)
