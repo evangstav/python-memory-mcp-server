@@ -237,8 +237,12 @@ class JsonlBackend(Backend):
             List of successfully deleted entity names
 
         Raises:
+            ValueError: If input validation fails
             FileAccessError: If file operations fail
         """
+        if not entity_names:
+            return []
+
         async with self._write_lock:
             graph = await self._check_cache()
             existing_entities = cast(Dict[str, Entity], self._indices["entity_names"])
@@ -275,7 +279,7 @@ class JsonlBackend(Backend):
                     deleted_names.append(name)
 
             if deleted_names:
-                # Remove entities from graph
+                # Remove entities from graph and persist changes
                 graph.entities = [
                     e for e in graph.entities if e.name not in deleted_names
                 ]
@@ -284,7 +288,7 @@ class JsonlBackend(Backend):
                 self._dirty = False
                 self._cache_timestamp = time.monotonic()
 
-            return deleted_names
+            return deleted_names  # Return only actually deleted names
 
     async def create_relations(self, relations: List[Relation]) -> List[Relation]:
         """Create multiple new relations.
