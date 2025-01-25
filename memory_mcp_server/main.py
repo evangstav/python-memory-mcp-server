@@ -141,7 +141,7 @@ class MemoryServer:
             Dict containing success status
         """
         try:
-            # TODO: Implement delete_observations in KnowledgeGraphManager
+            # TODO: Implement delete_observations in KnowledgeGraphManager AI!
             return {"success": True}
         except Exception as err:
             raise McpError(ErrorCode.InternalError, str(err)) from err
@@ -157,7 +157,7 @@ class MemoryServer:
             Dict containing success status
         """
         try:
-            # TODO: Implement delete_relations in KnowledgeGraphManager
+            # TODO: Implement delete_relations in KnowledgeGraphManager AI!
             return {"success": True}
         except Exception as err:
             raise McpError(ErrorCode.InternalError, str(err)) from err
