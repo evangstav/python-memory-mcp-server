@@ -7,14 +7,10 @@ name = "memory-mcp-server"
 version = "0.2.0"
 description = "MCP server for managing Claude's memory and knowledge graph"
 requires-python = ">=3.12"
-dependencies = ["aiofiles"]
+dependencies = ["aiofiles", "memory-mcp-server"]
 
 [project.optional-dependencies]
-test = [
-    "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-]
+test = ["pytest", "pytest-asyncio", "pytest-cov"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
