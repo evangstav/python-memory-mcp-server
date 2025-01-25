@@ -184,7 +184,6 @@ class MemoryServer:
 
     async def list_tools(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """List available tools."""
-        # TODO Update the list of tools AI!
         return {
             "tools": [
                 {
