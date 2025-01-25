@@ -123,8 +123,8 @@ class MemoryServer:
             Dict containing success status
         """
         try:
-            # TODO: Implement delete_entities in KnowledgeGraphManager AI!
-            return {"success": True}
+            deleted = await self.knowledge_graph.delete_entities(names)
+            return {"success": True, "deleted": deleted}
         except Exception as err:
             raise McpError(ErrorCode.InternalError, str(err)) from err
 
