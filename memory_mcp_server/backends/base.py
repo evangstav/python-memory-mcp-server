@@ -32,6 +32,18 @@ class Backend(ABC):
         pass
 
     @abstractmethod
+    async def delete_entities(self, entity_names: List[str]) -> List[str]:
+        """Create multiple new entities in the backend.
+
+        Args:
+            entities: List of entities to create
+
+        Returns:
+            List of successfully created entities
+        """
+        pass
+
+    @abstractmethod
     async def create_relations(self, relations: List[Relation]) -> List[Relation]:
         """Create multiple new relations in the backend.
 
@@ -40,6 +52,19 @@ class Backend(ABC):
 
         Returns:
             List of successfully created relations
+        """
+        pass
+
+    @abstractmethod
+    async def delete_relations(self, from_: str, to: str) -> None:
+        """Delete relations between two entities.
+
+        Args:
+            from_: Source entity name
+            to: Target entity name
+
+        Raises:
+            EntityNotFoundError: If either entity is not found
         """
         pass
 

@@ -68,17 +68,17 @@ class KnowledgeGraphManager:
         """
         if not entity_names:
             raise ValueError("Entity names list cannot be empty")
-            
+
         async with self._write_lock:
             return await self.backend.delete_entities(entity_names)
 
     async def delete_relations(self, from_: str, to: str) -> None:
         """Delete relations between two entities.
-        
+
         Args:
             from_: Source entity name
             to: Target entity name
-            
+
         Raises:
             EntityNotFoundError: If either entity is not found
         """
