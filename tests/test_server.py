@@ -200,6 +200,8 @@ def mock_manager() -> MockManagerProtocol:
                 return await self.read_graph()
             return KnowledgeGraph(entities=[], relations=[])
 
+        # TODO add flush method AI!
+
     return MockManager()
 
 
@@ -288,16 +290,16 @@ async def test_read_graph(mock_manager: MockManagerProtocol) -> None:
 async def test_save_graph(mock_manager: MockManagerProtocol) -> None:
     """Test saving the graph through the MCP server."""
     # First create some test data
-    await mock_manager.create_entities([
-        Entity(name="TestSave", entityType="TestType", observations=[])
-    ])
-    
+    await mock_manager.create_entities(
+        [Entity(name="TestSave", entityType="TestType", observations=[])]
+    )
+
     # Explicitly save the graph
     await mock_manager.flush()
-    
+
     # Read back the graph
     graph = await mock_manager.read_graph()
-    
+
     # Verify our test entity exists
     assert any(e.name == "TestSave" for e in graph.entities)
     # Verify the save preserved the structure
