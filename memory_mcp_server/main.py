@@ -375,7 +375,10 @@ class MemoryServer:
 def main() -> None:
     """Run the server."""
     args = parse_arguments()
-    server = MemoryServer(args["path"], args["cache_ttl"])
+    server = MemoryServer(
+        memory_file=Path(args["path"]),
+        cache_ttl=args["cache_ttl"]
+    )
     asyncio.run(server.run())
 
 
