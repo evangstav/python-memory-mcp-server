@@ -346,7 +346,45 @@ class JsonlBackend(Backend):
 
             return new_relations
 
-    # TODO Implement delete_relations AI!
+    async def delete_relations(self, from_: str, to: str) -> None:
+        """Delete relations between two entities.
+        
+        Args:
+            from_: Source entity name
+            to: Target entity name
+            
+        Raises:
+            EntityNotFoundError: If either entity doesn't exist
+        """
+        async with self._write_lock:
+            graph = await self._check_cache()
+            existing_entities = cast(Dict[str, Entity], self._indices["entity_names"])
+            
+            # Validate entities exist
+            if from_ not in existing_entities:
+                raise EntityNotFoundError(f"Entity not found: {from_}")
+            if to not in existing_entities:
+                raise EntityNotFoundError(f"Entity not found: {to}")
+
+            # Get relations to remove from indices
+            relations_from = cast(Dict[str, List[Relation]], self._indices["relations_from"]).get(from_, [])
+            relations_to_remove = [rel for rel in relations_from if rel.to == to]
+            
+            if relations_to_remove:
+                # Remove from graph
+                graph.relations = [rel for rel in graph.relations if rel not in relations_to_remove]
+                
+                # Update indices
+                relation_keys = cast(Set[Tuple[str, str, str]], self._indices["relation_keys"])
+                for rel in relations_to_remove:
+                    relation_keys.discard((rel.from_, rel.to, rel.relationType))
+                    cast(Dict[str, List[Relation]], self._indices["relations_from"])[from_].remove(rel)
+                    cast(Dict[str, List[Relation]], self._indices["relations_to"])[to].remove(rel)
+                
+                self._dirty = True
+                await self._save_graph(graph)
+                self._dirty = False
+                self._cache_timestamp = time.monotonic()
 
     async def read_graph(self) -> KnowledgeGraph:
         """Read the entire knowledge graph.
