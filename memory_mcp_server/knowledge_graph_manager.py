@@ -62,9 +62,13 @@ class KnowledgeGraphManager:
             List of successfully deleted entity names
 
         Raises:
+            ValueError: If entity_names list is empty
             EntityNotFoundError: If any entity is not found in the graph
             FileAccessError: If there are file system issues (backend specific)
         """
+        if not entity_names:
+            raise ValueError("Entity names list cannot be empty")
+            
         async with self._write_lock:
             return await self.backend.delete_entities(entity_names)
 
