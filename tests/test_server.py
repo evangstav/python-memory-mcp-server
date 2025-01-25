@@ -146,7 +146,12 @@ def mock_manager() -> MockManagerProtocol:
     """Create a mock manager for testing."""
 
     class MockManager:
+        def __init__(self):
+            self.entities: List[Entity] = []
+            self.relations: List[Relation] = []
+
         async def create_entities(self, entities: List[Entity]) -> List[Entity]:
+            self.entities.extend(entities)
             return entities
 
         async def create_relations(self, relations: List[Relation]) -> List[Relation]:
@@ -172,22 +177,10 @@ def mock_manager() -> MockManagerProtocol:
                 raise EntityNotFoundError("MissingEntity")
 
         async def read_graph(self) -> KnowledgeGraph:
-            # Return a simple graph
+            # Return current state including any created entities
             return KnowledgeGraph(
-                entities=[
-                    Entity(
-                        name="TestEntity",
-                        entityType="TypeA",
-                        observations=["obs1"],
-                    )
-                ],
-                relations=[
-                    Relation(
-                        from_="TestEntity",
-                        to="AnotherEntity",
-                        relationType="knows",
-                    )
-                ],
+                entities=self.entities,
+                relations=self.relations,
             )
 
         async def search_nodes(self, query: str) -> KnowledgeGraph:
