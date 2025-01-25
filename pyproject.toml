@@ -10,7 +10,11 @@ requires-python = ">=3.12"
 dependencies = ["aiofiles"]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-asyncio", "pytest-cov"]
+test = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
