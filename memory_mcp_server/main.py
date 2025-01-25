@@ -128,24 +128,6 @@ class MemoryServer:
         except Exception as err:
             raise McpError(ErrorCode.InternalError, str(err)) from err
 
-    async def delete_observations(
-        self, entity: str, observations: List[str]
-    ) -> Dict[str, Any]:
-        """Delete specific observations from an entity.
-
-        Args:
-            entity: Name of the entity to delete observations from
-            observations: List of observations to delete
-
-        Returns:
-            Dict containing success status
-        """
-        try:
-            await self.knowledge_graph.delete_observations(entity, observations)
-            return {"success": True}
-        except Exception as err:
-            raise McpError(ErrorCode.InternalError, str(err)) from err
-
     async def delete_relations(self, from_: str, to: str) -> Dict[str, Any]:
         """Delete relations between entities.
 
@@ -159,21 +141,6 @@ class MemoryServer:
         try:
             await self.knowledge_graph.delete_relations(from_, to)
             return {"success": True}
-        except Exception as err:
-            raise McpError(ErrorCode.InternalError, str(err)) from err
-
-    async def open_nodes(self, names: List[str]) -> Dict[str, Any]:
-        """Retrieve specific nodes by name.
-
-        Args:
-            names: List of entity names to retrieve
-
-        Returns:
-            Dict containing the requested nodes
-        """
-        try:
-            # TODO: Implement open_nodes in KnowledgeGraphManager
-            return {"nodes": []}
         except Exception as err:
             raise McpError(ErrorCode.InternalError, str(err)) from err
 
@@ -217,6 +184,7 @@ class MemoryServer:
 
     async def list_tools(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """List available tools."""
+        # TODO Update the list of tools AI!
         return {
             "tools": [
                 {
@@ -393,12 +361,6 @@ class MemoryServer:
         elif tool_name == "delete_entities":
             result = await self.delete_entities(arguments["names"])
 
-        elif tool_name == "delete_observations":
-            result = await self.delete_observations(
-                arguments["entity"],
-                arguments["observations"],
-            )
-
         elif tool_name == "delete_relations":
             result = await self.delete_relations(
                 arguments.get("from"),
@@ -410,9 +372,6 @@ class MemoryServer:
 
         elif tool_name == "search_nodes":
             result = await self.search_nodes(arguments["query"])
-
-        elif tool_name == "open_nodes":
-            result = await self.open_nodes(arguments["names"])
 
         else:
             raise McpError(ErrorCode.MethodNotFound, f"Unknown tool: {tool_name}")
