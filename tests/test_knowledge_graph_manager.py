@@ -208,8 +208,7 @@ async def test_concurrent_operations(
     delete_tasks = [delete_entity(i) for i in range(3)]
     create_tasks = [create_entity(i) for i in range(5, 7)]
     delete_results, create_results = await asyncio.gather(
-        asyncio.gather(*delete_tasks),
-        asyncio.gather(*create_tasks)
+        asyncio.gather(*delete_tasks), asyncio.gather(*create_tasks)
     )
 
     # Verify deletions

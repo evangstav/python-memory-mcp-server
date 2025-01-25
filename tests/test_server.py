@@ -108,21 +108,29 @@ TOOLS: Dict[str, Any] = {
 class MockManagerProtocol(Protocol):
     """Protocol defining the interface for MockManager."""
 
-    async def create_entities(self, entities: List[Entity]) -> List[Entity]: ...
+    async def create_entities(self, entities: List[Entity]) -> List[Entity]:
+        ...
 
-    async def create_relations(self, relations: List[Relation]) -> List[Relation]: ...
+    async def create_relations(self, relations: List[Relation]) -> List[Relation]:
+        ...
 
-    async def add_observations(self, entity: str, observations: List[str]) -> None: ...
+    async def add_observations(self, entity: str, observations: List[str]) -> None:
+        ...
 
-    async def delete_entities(self, names: List[str]) -> None: ...
+    async def delete_entities(self, names: List[str]) -> None:
+        ...
 
-    async def delete_relations(self, from_: str, to: str) -> None: ...
+    async def delete_relations(self, from_: str, to: str) -> None:
+        ...
 
-    async def read_graph(self) -> KnowledgeGraph: ...
+    async def read_graph(self) -> KnowledgeGraph:
+        ...
 
-    async def search_nodes(self, query: str) -> KnowledgeGraph: ...
+    async def search_nodes(self, query: str) -> KnowledgeGraph:
+        ...
 
-    async def flush(self) -> None: ...
+    async def flush(self) -> None:
+        ...
 
 
 @pytest.fixture(scope="function")
@@ -130,7 +138,7 @@ def mock_manager() -> MockManagerProtocol:
     """Create a mock manager for testing."""
 
     class MockManager:
-        def __init__(self):
+        def __init__(self) -> None:
             self.entities: List[Entity] = []
             self.relations: List[Relation] = []
 
@@ -291,18 +299,26 @@ async def test_save_graph(mock_manager: MockManagerProtocol) -> None:
 async def test_search_nodes(mock_manager: MockManagerProtocol) -> None:
     """Test searching nodes through the MCP server."""
     # Create test entity first
-    await mock_manager.create_entities([
-        Entity(name="TestEntity", entityType="TestType", observations=["test observation"])
-    ])
-    
+    await mock_manager.create_entities(
+        [
+            Entity(
+                name="TestEntity",
+                entityType="TestType",
+                observations=["test observation"],
+            )
+        ]
+    )
+
     handler = cast(Any, TOOLS["search_nodes"])
     arguments = {"query": "TestEntity"}
     result = await handler(mock_manager, arguments)
     data = json.loads(result[0].text)
-    
+
     assert len(data["entities"]) == 1
     assert data["entities"][0]["name"] == "TestEntity"
-    assert isinstance(data["entities"][0]["observations"], (list, tuple))  # Allow both list and tuple
+    assert isinstance(
+        data["entities"][0]["observations"], (list, tuple)
+    )  # Allow both list and tuple
 
 
 def test_error_handling() -> None:

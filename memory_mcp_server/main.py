@@ -267,21 +267,6 @@ class MemoryServer:
                     },
                 },
                 {
-                    "name": "delete_observations",
-                    "description": "Delete specific observations from entities",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "entity": {"type": "string"},
-                            "observations": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
-                        },
-                        "required": ["entity", "observations"],
-                    },
-                },
-                {
                     "name": "delete_relations",
                     "description": "Delete specific relations",
                     "inputSchema": {
@@ -375,10 +360,7 @@ class MemoryServer:
 def main() -> None:
     """Run the server."""
     args = parse_arguments()
-    server = MemoryServer(
-        memory_file=Path(args["path"]),
-        cache_ttl=args["cache_ttl"]
-    )
+    server = MemoryServer(args["path"], args["cache_ttl"])
     asyncio.run(server.run())
 
 
