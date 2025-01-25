@@ -291,6 +291,7 @@ class MemoryServer:
                             "from": {"type": "string"},
                             "to": {"type": "string"},
                         },
+                        "required": ["from", "to"],
                     },
                 },
                 {
@@ -307,20 +308,6 @@ class MemoryServer:
                             "query": {"type": "string"},
                         },
                         "required": ["query"],
-                    },
-                },
-                {
-                    "name": "open_nodes",
-                    "description": "Retrieve specific nodes by name",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "names": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
-                        },
-                        "required": ["names"],
                     },
                 },
             ]
