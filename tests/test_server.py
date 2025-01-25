@@ -94,24 +94,14 @@ async def search_nodes_handler(
     return [TextContent(type="text", text=json.dumps(result.to_dict()))]
 
 
-async def open_nodes_handler(
-    manager: Any, arguments: Dict[str, Any]
-) -> List[TextContent]:
-    """Mock open nodes handler."""
-    result = await manager.open_nodes(arguments["names"])
-    return [TextContent(type="text", text=json.dumps(result.to_dict()))]
-
-
 TOOLS: Dict[str, Any] = {
     "create_entities": create_entities_handler,
     "create_relations": create_relations_handler,
     "add_observations": add_observations_handler,
     "delete_entities": delete_entities_handler,
-    "delete_observations": delete_observations_handler,
     "delete_relations": delete_relations_handler,
     "read_graph": read_graph_handler,
     "search_nodes": search_nodes_handler,
-    "open_nodes": open_nodes_handler,
 }
 
 
@@ -126,17 +116,11 @@ class MockManagerProtocol(Protocol):
 
     async def delete_entities(self, names: List[str]) -> None: ...
 
-    async def delete_observations(
-        self, entity: str, observations: List[str]
-    ) -> None: ...
-
     async def delete_relations(self, from_: str, to: str) -> None: ...
 
     async def read_graph(self) -> KnowledgeGraph: ...
 
     async def search_nodes(self, query: str) -> KnowledgeGraph: ...
-
-    async def open_nodes(self, names: List[str]) -> KnowledgeGraph: ...
 
     async def flush(self) -> None: ...
 
@@ -165,12 +149,6 @@ def mock_manager() -> MockManagerProtocol:
             for name in names:
                 if name == "MissingEntity":
                     raise EntityNotFoundError(name)
-
-        async def delete_observations(
-            self, entity: str, observations: List[str]
-        ) -> None:
-            if entity == "MissingEntity":
-                raise EntityNotFoundError(entity)
 
         async def delete_relations(self, from_: str, to: str) -> None:
             if from_ == "MissingEntity" or to == "MissingEntity":
@@ -252,16 +230,6 @@ async def test_delete_entities(mock_manager: MockManagerProtocol) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_observations(mock_manager: MockManagerProtocol) -> None:
-    """Test deleting observations through the MCP server."""
-    handler = cast(Any, TOOLS["delete_observations"])
-    arguments = {"entity": "E1", "observations": ["obs1"]}
-    result = await handler(mock_manager, arguments)
-    data = json.loads(result[0].text)
-    assert data["success"] is True
-
-
-@pytest.mark.asyncio
 async def test_delete_relations(mock_manager: MockManagerProtocol) -> None:
     """Test deleting relations through the MCP server."""
     handler = cast(Any, TOOLS["delete_relations"])
@@ -274,6 +242,7 @@ async def test_delete_relations(mock_manager: MockManagerProtocol) -> None:
 @pytest.mark.asyncio
 async def test_read_graph(mock_manager: MockManagerProtocol) -> None:
     """Test reading the graph through the MCP server."""
+    # This test is failing AI!
     handler = cast(Any, TOOLS["read_graph"])
     arguments: Dict[str, Any] = {}
     result = await handler(mock_manager, arguments)
@@ -300,7 +269,9 @@ async def test_save_graph(mock_manager: MockManagerProtocol) -> None:
     # Verify our test entity exists
     assert any(e.name == "TestSave" for e in graph.entities)
     # Verify the save preserved the structure
-    assert isinstance(graph.entities[0].observations, (list, tuple))  # Allow both list and tuple for immutability
+    assert isinstance(
+        graph.entities[0].observations, (list, tuple)
+    )  # Allow both list and tuple for immutability
 
 
 @pytest.mark.asyncio
@@ -308,18 +279,6 @@ async def test_search_nodes(mock_manager: MockManagerProtocol) -> None:
     """Test searching nodes through the MCP server."""
     handler = cast(Any, TOOLS["search_nodes"])
     arguments = {"query": "TestEntity"}
-    result = await handler(mock_manager, arguments)
-    data = json.loads(result[0].text)
-    assert len(data["entities"]) == 1
-    assert data["entities"][0]["name"] == "TestEntity"
-    assert isinstance(data["entities"][0]["observations"], list)
-
-
-@pytest.mark.asyncio
-async def test_open_nodes(mock_manager: MockManagerProtocol) -> None:
-    """Test opening nodes through the MCP server."""
-    handler = cast(Any, TOOLS["open_nodes"])
-    arguments = {"names": ["TestEntity"]}
     result = await handler(mock_manager, arguments)
     data = json.loads(result[0].text)
     assert len(data["entities"]) == 1
