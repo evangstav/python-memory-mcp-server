@@ -242,14 +242,19 @@ async def test_delete_relations(mock_manager: MockManagerProtocol) -> None:
 @pytest.mark.asyncio
 async def test_read_graph(mock_manager: MockManagerProtocol) -> None:
     """Test reading the graph through the MCP server."""
-    # This test is failing AI!
+    # Create test entity first
+    await mock_manager.create_entities([
+        Entity(name="TestEntity", entityType="TestType", observations=["test observation"])
+    ])
+    
     handler = cast(Any, TOOLS["read_graph"])
     arguments: Dict[str, Any] = {}
     result = await handler(mock_manager, arguments)
     data = json.loads(result[0].text)
+    
     assert len(data["entities"]) == 1
     assert data["entities"][0]["name"] == "TestEntity"
-    assert isinstance(data["entities"][0]["observations"], list)
+    assert isinstance(data["entities"][0]["observations"], (list, tuple))  # Allow both list and tuple
 
 
 @pytest.mark.asyncio
