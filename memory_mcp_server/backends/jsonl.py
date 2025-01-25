@@ -189,7 +189,7 @@ class JsonlBackend(Backend):
         self,
         graph: KnowledgeGraph,
         first_line: str,
-        f: aiofiles.threadpool.AsyncTextIOWrapper,  # TODO check if this is correct AI!
+        f: aiofiles.threadpool.AsyncTextIOWrapper,
         hasher: hashlib._Hash,
     ) -> None:
         """Handle files without checksum header"""
