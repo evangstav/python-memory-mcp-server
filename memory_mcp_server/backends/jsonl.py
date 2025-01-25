@@ -5,7 +5,7 @@ import json
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 import aiofiles
 
@@ -28,6 +28,7 @@ class JsonlBackend(Backend):
         self.cache_ttl = cache_ttl
         self._cache: Optional[KnowledgeGraph] = None
         self._cache_timestamp: float = 0.0
+        self._cache_file_mtime: float = 0.0
         self._dirty = False
         self._write_lock = asyncio.Lock()
         self._lock = asyncio.Lock()
@@ -36,11 +37,14 @@ class JsonlBackend(Backend):
             "entity_types": defaultdict(list),
             "relations_from": defaultdict(list),
             "relations_to": defaultdict(list),
+            "relation_keys": set(),
         }
 
     async def initialize(self) -> None:
-        """Initialize the backend. Creates parent directory if needed."""
+        """Initialize the backend. Creates parent directory and validates path."""
         self.memory_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.memory_path.exists() and self.memory_path.is_dir():
+            raise FileAccessError(f"Path {self.memory_path} is a directory")
 
     async def close(self) -> None:
         """Close the backend. Ensures any pending changes are saved."""
@@ -56,6 +60,7 @@ class JsonlBackend(Backend):
         entity_types: Dict[str, List[Entity]] = defaultdict(list)
         relations_from: Dict[str, List[Relation]] = defaultdict(list)
         relations_to: Dict[str, List[Relation]] = defaultdict(list)
+        relation_keys: Set[Tuple[str, str, str]] = set()
 
         for entity in graph.entities:
             entity_names[entity.name] = entity
@@ -64,11 +69,13 @@ class JsonlBackend(Backend):
         for relation in graph.relations:
             relations_from[relation.from_].append(relation)
             relations_to[relation.to].append(relation)
+            relation_keys.add((relation.from_, relation.to, relation.relationType))
 
         self._indices["entity_names"] = entity_names
         self._indices["entity_types"] = entity_types
         self._indices["relations_from"] = relations_from
         self._indices["relations_to"] = relations_to
+        self._indices["relation_keys"] = relation_keys
 
     async def _check_cache(self) -> KnowledgeGraph:
         """Check if cache needs refresh and reload if necessary.
@@ -77,24 +84,34 @@ class JsonlBackend(Backend):
             Current KnowledgeGraph from cache or file
         """
         current_time = time.monotonic()
+        file_mtime = (
+            self.memory_path.stat().st_mtime if self.memory_path.exists() else 0
+        )
         needs_refresh = (
             self._cache is None
             or (current_time - self._cache_timestamp > self.cache_ttl)
             or self._dirty
+            or (file_mtime > self._cache_file_mtime)
         )
 
         if needs_refresh:
             async with self._lock:
                 current_time = time.monotonic()
-                if (
+                file_mtime = (
+                    self.memory_path.stat().st_mtime if self.memory_path.exists() else 0
+                )
+                needs_refresh = (
                     self._cache is None
                     or (current_time - self._cache_timestamp > self.cache_ttl)
                     or self._dirty
-                ):
+                    or (file_mtime > self._cache_file_mtime)
+                )
+                if needs_refresh:
                     try:
                         graph = await self._load_graph_from_file()
                         self._cache = graph
                         self._cache_timestamp = current_time
+                        self._cache_file_mtime = file_mtime
                         self._build_indices(graph)
                         self._dirty = False
                     except Exception:
@@ -147,7 +164,7 @@ class JsonlBackend(Backend):
             raise FileAccessError(f"Error reading file: {str(err)}") from err
 
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
-        """Save the knowledge graph to JSONL file atomically.
+        """Save the knowledge graph to JSONL file atomically with buffered writes.
 
         Args:
             graph: KnowledgeGraph to save
@@ -156,8 +173,12 @@ class JsonlBackend(Backend):
             FileAccessError: If file cannot be written
         """
         temp_path = self.memory_path.with_suffix(".tmp")
+        buffer_size = 1000  # Number of lines to buffer before writing
+
         try:
             async with aiofiles.open(temp_path, mode="w", encoding="utf-8") as f:
+                buffer = []
+                # Write entities
                 for entity in graph.entities:
                     line = json.dumps(
                         {
@@ -167,8 +188,16 @@ class JsonlBackend(Backend):
                             "observations": entity.observations,
                         }
                     )
-                    await f.write(line + "\n")
+                    buffer.append(line)
+                    if len(buffer) >= buffer_size:
+                        await f.write("\n".join(buffer) + "\n")
+                        buffer = []
+                # Write remaining entities
+                if buffer:
+                    await f.write("\n".join(buffer) + "\n")
+                    buffer = []
 
+                # Write relations
                 for relation in graph.relations:
                     line = json.dumps(
                         {
@@ -178,7 +207,13 @@ class JsonlBackend(Backend):
                             "relationType": relation.relationType,
                         }
                     )
-                    await f.write(line + "\n")
+                    buffer.append(line)
+                    if len(buffer) >= buffer_size:
+                        await f.write("\n".join(buffer) + "\n")
+                        buffer = []
+                # Write remaining relations
+                if buffer:
+                    await f.write("\n".join(buffer) + "\n")
 
             temp_path.replace(self.memory_path)
         except Exception as err:
@@ -191,18 +226,7 @@ class JsonlBackend(Backend):
                     pass
 
     async def create_entities(self, entities: List[Entity]) -> List[Entity]:
-        """Create multiple new entities.
-
-        Args:
-            entities: List of entities to create
-
-        Returns:
-            List of successfully created entities
-
-        Raises:
-            ValueError: If entity validation fails
-            FileAccessError: If file operations fail
-        """
+        """Create multiple new entities with enhanced duplicate check."""
         async with self._write_lock:
             graph = await self._check_cache()
             existing_entities = cast(Dict[str, Entity], self._indices["entity_names"])
@@ -228,18 +252,7 @@ class JsonlBackend(Backend):
             return new_entities
 
     async def delete_entities(self, entity_names: List[str]) -> List[str]:
-        """Delete multiple existing entities by name.
-
-        Args:
-            entity_names: List of entity names to delete
-
-        Returns:
-            List of successfully deleted entity names
-
-        Raises:
-            ValueError: If input validation fails
-            FileAccessError: If file operations fail
-        """
+        """Delete entities with optimized relation cleanup."""
         if not entity_names:
             return []
 
@@ -247,17 +260,19 @@ class JsonlBackend(Backend):
             graph = await self._check_cache()
             existing_entities = cast(Dict[str, Entity], self._indices["entity_names"])
             deleted_names = []
+            relation_keys = cast(
+                Set[Tuple[str, str, str]], self._indices["relation_keys"]
+            )
 
             for name in entity_names:
                 if name in existing_entities:
-                    # Remove entity from all indices
                     entity = existing_entities.pop(name)
                     entity_type_list = cast(
                         Dict[str, List[Entity]], self._indices["entity_types"]
                     )[entity.entityType]
                     entity_type_list.remove(entity)
 
-                    # Remove any relations involving this entity
+                    # Remove associated relations
                     relations_from = cast(
                         Dict[str, List[Relation]], self._indices["relations_from"]
                     ).get(name, [])
@@ -266,9 +281,12 @@ class JsonlBackend(Backend):
                     ).get(name, [])
                     relations_to_remove = relations_from + relations_to
 
-                    # Remove relations from graph and indices
                     for relation in relations_to_remove:
                         graph.relations.remove(relation)
+                        # Remove from relation indices
+                        relation_keys.discard(
+                            (relation.from_, relation.to, relation.relationType)
+                        )
                         cast(
                             Dict[str, List[Relation]], self._indices["relations_from"]
                         )[relation.from_].remove(relation)
@@ -279,7 +297,6 @@ class JsonlBackend(Backend):
                     deleted_names.append(name)
 
             if deleted_names:
-                # Remove entities from graph and persist changes
                 graph.entities = [
                     e for e in graph.entities if e.name not in deleted_names
                 ]
@@ -288,25 +305,16 @@ class JsonlBackend(Backend):
                 self._dirty = False
                 self._cache_timestamp = time.monotonic()
 
-            return deleted_names  # Return only actually deleted names
+            return deleted_names
 
     async def create_relations(self, relations: List[Relation]) -> List[Relation]:
-        """Create multiple new relations.
-
-        Args:
-            relations: List of relations to create
-
-        Returns:
-            List of successfully created relations
-
-        Raises:
-            ValueError: If relation validation fails
-            EntityNotFoundError: If referenced entities don't exist
-            FileAccessError: If file operations fail
-        """
+        """Create relations with optimized duplicate checking."""
         async with self._write_lock:
             graph = await self._check_cache()
             existing_entities = cast(Dict[str, Entity], self._indices["entity_names"])
+            relation_keys = cast(
+                Set[Tuple[str, str, str]], self._indices["relation_keys"]
+            )
             new_relations = []
 
             for relation in relations:
@@ -318,16 +326,10 @@ class JsonlBackend(Backend):
                 if relation.to not in existing_entities:
                     raise EntityNotFoundError(f"Entity not found: {relation.to}")
 
-                existing_from = cast(
-                    Dict[str, List[Relation]], self._indices["relations_from"]
-                ).get(relation.from_, [])
-                if not any(
-                    r.from_ == relation.from_
-                    and r.to == relation.to
-                    and r.relationType == relation.relationType
-                    for r in existing_from
-                ):
+                key = (relation.from_, relation.to, relation.relationType)
+                if key not in relation_keys:
                     new_relations.append(relation)
+                    relation_keys.add(key)
                     cast(Dict[str, List[Relation]], self._indices["relations_from"])[
                         relation.from_
                     ].append(relation)
@@ -343,6 +345,8 @@ class JsonlBackend(Backend):
                 self._cache_timestamp = time.monotonic()
 
             return new_relations
+
+    # TODO Implement delete_relations AI!
 
     async def read_graph(self) -> KnowledgeGraph:
         """Read the entire knowledge graph.
