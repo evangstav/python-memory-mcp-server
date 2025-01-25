@@ -138,7 +138,7 @@ class MockManagerProtocol(Protocol):
 
     async def open_nodes(self, names: List[str]) -> KnowledgeGraph: ...
 
-    # Implement flush method to comply with interface AI!
+    async def flush(self) -> None: ...
 
 
 @pytest.fixture(scope="function")
