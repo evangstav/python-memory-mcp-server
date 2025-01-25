@@ -248,25 +248,37 @@ class JsonlBackend(Backend):
                 if name in existing_entities:
                     # Remove entity from all indices
                     entity = existing_entities.pop(name)
-                    entity_type_list = cast(Dict[str, List[Entity]], self._indices["entity_types"])[entity.entityType]
+                    entity_type_list = cast(
+                        Dict[str, List[Entity]], self._indices["entity_types"]
+                    )[entity.entityType]
                     entity_type_list.remove(entity)
 
                     # Remove any relations involving this entity
-                    relations_from = cast(Dict[str, List[Relation]], self._indices["relations_from"]).get(name, [])
-                    relations_to = cast(Dict[str, List[Relation]], self._indices["relations_to"]).get(name, [])
+                    relations_from = cast(
+                        Dict[str, List[Relation]], self._indices["relations_from"]
+                    ).get(name, [])
+                    relations_to = cast(
+                        Dict[str, List[Relation]], self._indices["relations_to"]
+                    ).get(name, [])
                     relations_to_remove = relations_from + relations_to
 
                     # Remove relations from graph and indices
                     for relation in relations_to_remove:
                         graph.relations.remove(relation)
-                        cast(Dict[str, List[Relation]], self._indices["relations_from"])[relation.from_].remove(relation)
-                        cast(Dict[str, List[Relation]], self._indices["relations_to"])[relation.to].remove(relation)
+                        cast(
+                            Dict[str, List[Relation]], self._indices["relations_from"]
+                        )[relation.from_].remove(relation)
+                        cast(Dict[str, List[Relation]], self._indices["relations_to"])[
+                            relation.to
+                        ].remove(relation)
 
                     deleted_names.append(name)
 
             if deleted_names:
                 # Remove entities from graph
-                graph.entities = [e for e in graph.entities if e.name not in deleted_names]
+                graph.entities = [
+                    e for e in graph.entities if e.name not in deleted_names
+                ]
                 self._dirty = True
                 await self._save_graph(graph)
                 self._dirty = False
