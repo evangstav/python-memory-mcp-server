@@ -280,13 +280,13 @@ async def test_delete_relations(jsonl_backend: JsonlBackend) -> None:
         Relation(from_="person1", to="location1", relationType="visited"),
         Relation(from_="person1", to="location1", relationType="likes"),
     ]
-    
+
     await jsonl_backend.create_entities(entities)
     await jsonl_backend.create_relations(relations)
-    
+
     # Delete relations
     await jsonl_backend.delete_relations("person1", "location1")
-    
+
     # Verify deletion
     graph = await jsonl_backend.read_graph()
     assert len(graph.relations) == 0
@@ -300,10 +300,10 @@ async def test_delete_nonexistent_relations(jsonl_backend: JsonlBackend) -> None
         Entity("location1", "location", []),
     ]
     await jsonl_backend.create_entities(entities)
-    
+
     # Try to delete non-existent relation
     await jsonl_backend.delete_relations("person1", "location1")
-    
+
     # Verify no changes
     graph = await jsonl_backend.read_graph()
     assert len(graph.relations) == 0
@@ -320,14 +320,14 @@ async def test_delete_bidirectional_relations(jsonl_backend: JsonlBackend) -> No
         Relation(from_="A", to="B", relationType="connects"),
         Relation(from_="B", to="A", relationType="connects"),
     ]
-    
+
     await jsonl_backend.create_entities(entities)
     await jsonl_backend.create_relations(relations)
-    
+
     # Delete relations in both directions
     await jsonl_backend.delete_relations("A", "B")
     await jsonl_backend.delete_relations("B", "A")
-    
+
     graph = await jsonl_backend.read_graph()
     assert len(graph.relations) == 0
 
