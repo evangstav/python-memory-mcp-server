@@ -242,10 +242,10 @@ async def test_delete_entities(jsonl_backend: JsonlBackend) -> None:
         Entity("test2", "location", ["obs2"]),
     ]
     await jsonl_backend.create_entities(entities)
-    
+
     relations = [
         Relation(from_="test1", to="test2", relationType="visits"),
-        Relation(from_="test2", to="test1", relationType="hosts")
+        Relation(from_="test2", to="test1", relationType="hosts"),
     ]
     await jsonl_backend.create_relations(relations)
 
@@ -266,3 +266,6 @@ async def test_delete_entities(jsonl_backend: JsonlBackend) -> None:
     # Test deleting non-existent entity
     deleted = await jsonl_backend.delete_entities(["nonexistent"])
     assert deleted == []
+
+
+# TODO write tests for delete_relations AI!
