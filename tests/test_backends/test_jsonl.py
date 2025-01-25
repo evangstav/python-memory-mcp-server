@@ -268,4 +268,72 @@ async def test_delete_entities(jsonl_backend: JsonlBackend) -> None:
     assert deleted == []
 
 
-# TODO write tests for delete_relations AI!
+@pytest.mark.asyncio(scope="function")
+async def test_delete_relations(jsonl_backend: JsonlBackend) -> None:
+    """Test deleting relations between entities."""
+    # Create test data
+    entities = [
+        Entity("person1", "person", []),
+        Entity("location1", "location", []),
+    ]
+    relations = [
+        Relation(from_="person1", to="location1", relationType="visited"),
+        Relation(from_="person1", to="location1", relationType="likes"),
+    ]
+    
+    await jsonl_backend.create_entities(entities)
+    await jsonl_backend.create_relations(relations)
+    
+    # Delete relations
+    await jsonl_backend.delete_relations("person1", "location1")
+    
+    # Verify deletion
+    graph = await jsonl_backend.read_graph()
+    assert len(graph.relations) == 0
+
+
+@pytest.mark.asyncio(scope="function")
+async def test_delete_nonexistent_relations(jsonl_backend: JsonlBackend) -> None:
+    """Test deleting relations that don't exist."""
+    entities = [
+        Entity("person1", "person", []),
+        Entity("location1", "location", []),
+    ]
+    await jsonl_backend.create_entities(entities)
+    
+    # Try to delete non-existent relation
+    await jsonl_backend.delete_relations("person1", "location1")
+    
+    # Verify no changes
+    graph = await jsonl_backend.read_graph()
+    assert len(graph.relations) == 0
+
+
+@pytest.mark.asyncio(scope="function")
+async def test_delete_bidirectional_relations(jsonl_backend: JsonlBackend) -> None:
+    """Test deleting bidirectional relations."""
+    entities = [
+        Entity("A", "node", []),
+        Entity("B", "node", []),
+    ]
+    relations = [
+        Relation(from_="A", to="B", relationType="connects"),
+        Relation(from_="B", to="A", relationType="connects"),
+    ]
+    
+    await jsonl_backend.create_entities(entities)
+    await jsonl_backend.create_relations(relations)
+    
+    # Delete relations in both directions
+    await jsonl_backend.delete_relations("A", "B")
+    await jsonl_backend.delete_relations("B", "A")
+    
+    graph = await jsonl_backend.read_graph()
+    assert len(graph.relations) == 0
+
+
+@pytest.mark.asyncio(scope="function")
+async def test_delete_relations_missing_entity(jsonl_backend: JsonlBackend) -> None:
+    """Test deleting relations with missing entities."""
+    with pytest.raises(EntityNotFoundError):
+        await jsonl_backend.delete_relations("ghost", "nonexistent")
