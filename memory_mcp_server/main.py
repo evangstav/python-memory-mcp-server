@@ -141,7 +141,7 @@ class MemoryServer:
             Dict containing success status
         """
         try:
-            # TODO: Implement delete_observations in KnowledgeGraphManager AI!
+            await self.knowledge_graph.delete_observations(entity, observations)
             return {"success": True}
         except Exception as err:
             raise McpError(ErrorCode.InternalError, str(err)) from err
