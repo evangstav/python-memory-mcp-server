@@ -200,7 +200,9 @@ def mock_manager() -> MockManagerProtocol:
                 return await self.read_graph()
             return KnowledgeGraph(entities=[], relations=[])
 
-        # TODO add flush method AI!
+        async def flush(self) -> None:
+            """Mock flush method to comply with interface."""
+            pass
 
     return MockManager()
 
