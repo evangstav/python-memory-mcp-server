@@ -123,7 +123,7 @@ class MemoryServer:
             Dict containing success status
         """
         try:
-            # TODO: Implement delete_entities in KnowledgeGraphManager
+            # TODO: Implement delete_entities in KnowledgeGraphManager AI!
             return {"success": True}
         except Exception as err:
             raise McpError(ErrorCode.InternalError, str(err)) from err
