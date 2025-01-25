@@ -1,11 +1,12 @@
 """JSONL backend implementation for Memory MCP Server."""
 
 import asyncio
+import hashlib
 import json
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
 
 import aiofiles
 
@@ -14,16 +15,22 @@ from ..interfaces import Entity, KnowledgeGraph, Relation
 from .base import Backend
 
 
+class ChangeEvent:
+    def __init__(
+        self,
+        event_type: str,
+        entities: Optional[List[Entity]] = None,
+        relations: Optional[List[Relation]] = None,
+    ):
+        self.event_type = event_type  # 'entities_created', 'entities_deleted', etc.
+        self.entities = entities or []
+        self.relations = relations or []
+
+
 class JsonlBackend(Backend):
     """JSONL file-based implementation of the knowledge graph backend."""
 
     def __init__(self, memory_path: Path, cache_ttl: int = 60):
-        """Initialize JSONL backend.
-
-        Args:
-            memory_path: Path to the JSONL file
-            cache_ttl: Cache time-to-live in seconds
-        """
         self.memory_path = memory_path
         self.cache_ttl = cache_ttl
         self._cache: Optional[KnowledgeGraph] = None
@@ -32,13 +39,28 @@ class JsonlBackend(Backend):
         self._dirty = False
         self._write_lock = asyncio.Lock()
         self._lock = asyncio.Lock()
+        self._listeners: List[Callable[[ChangeEvent], None]] = []
+
         self._indices: Dict[str, Any] = {
             "entity_names": {},
             "entity_types": defaultdict(list),
             "relations_from": defaultdict(list),
             "relations_to": defaultdict(list),
             "relation_keys": set(),
+            "observation_index": defaultdict(set),
         }
+
+    def register_listener(self, callback: Callable[[ChangeEvent], None]):
+        """Add a change listener (non-breaking addition)"""
+        self._listeners.append(callback)
+
+    def _notify_listeners(self, event: ChangeEvent):
+        """Notify all registered listeners"""
+        for callback in self._listeners:
+            try:
+                callback(event)
+            except Exception:
+                pass
 
     async def initialize(self) -> None:
         """Initialize the backend. Creates parent directory and validates path."""
@@ -76,6 +98,17 @@ class JsonlBackend(Backend):
         self._indices["relations_from"] = relations_from
         self._indices["relations_to"] = relations_to
         self._indices["relation_keys"] = relation_keys
+
+        # Add observation index
+        observation_index = cast(
+            Dict[str, Set[str]], self._indices["observation_index"]
+        )
+        observation_index.clear()
+
+        for entity in graph.entities:
+            for obs in entity.observations:
+                for word in obs.lower().split():
+                    observation_index[word].add(entity.name)
 
     async def _check_cache(self) -> KnowledgeGraph:
         """Check if cache needs refresh and reload if necessary.
@@ -120,65 +153,96 @@ class JsonlBackend(Backend):
 
         return cast(KnowledgeGraph, self._cache)
 
+    async def _process_line(
+        self, graph: KnowledgeGraph, line: str, hasher: hashlib._Hash = None
+    ) -> None:
+        """Process a single line from the file"""
+        line = line.strip()
+        if not line:
+            return
+
+        try:
+            item = json.loads(line)
+            if hasher:
+                hasher.update(line.encode())
+
+            if item["type"] == "entity":
+                graph.entities.append(
+                    Entity(
+                        name=item["name"],
+                        entityType=item["entityType"],
+                        observations=item["observations"],
+                    )
+                )
+            elif item["type"] == "relation":
+                graph.relations.append(
+                    Relation(
+                        from_=item["from"],
+                        to=item["to"],
+                        relationType=item["relationType"],
+                    )
+                )
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    async def _process_legacy_file(
+        self,
+        graph: KnowledgeGraph,
+        first_line: str,
+        f: aiofiles.threadpool.AsyncTextIOWrapper,  # TODO check if this is correct AI!
+        hasher: hashlib._Hash,
+    ) -> None:
+        """Handle files without checksum header"""
+        await self._process_line(graph, first_line, hasher)
+        async for line in f:
+            await self._process_line(graph, line, hasher)
+
     async def _load_graph_from_file(self) -> KnowledgeGraph:
-        """Load the knowledge graph from JSONL file.
-
-        Returns:
-            KnowledgeGraph loaded from file
-
-        Raises:
-            FileAccessError: If file cannot be read
-        """
+        """Load with checksum validation (backward compatible)"""
         if not self.memory_path.exists():
             return KnowledgeGraph(entities=[], relations=[])
 
         graph = KnowledgeGraph(entities=[], relations=[])
+        hasher = hashlib.sha256()
+        expected_checksum = None
+
         try:
             async with aiofiles.open(self.memory_path, mode="r", encoding="utf-8") as f:
+                first_line = await f.readline()
+                try:
+                    header = json.loads(first_line.strip())
+                    expected_checksum = header.get("checksum")
+                except json.JSONDecodeError:
+                    # Handle files without checksum header
+                    await self._process_legacy_file(graph, first_line, f, hasher)
+                    return graph
+
                 async for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        item = json.loads(line)
-                        if item["type"] == "entity":
-                            graph.entities.append(
-                                Entity(
-                                    name=item["name"],
-                                    entityType=item["entityType"],
-                                    observations=item["observations"],
-                                )
-                            )
-                        elif item["type"] == "relation":
-                            graph.relations.append(
-                                Relation(
-                                    from_=item["from"],
-                                    to=item["to"],
-                                    relationType=item["relationType"],
-                                )
-                            )
-                    except (json.JSONDecodeError, KeyError):
-                        continue
+                    hasher.update(line.encode())
+                    await self._process_line(graph, line)
+
+            if expected_checksum and expected_checksum != "pending":
+                actual_checksum = hasher.hexdigest()
+                if actual_checksum != expected_checksum:
+                    raise FileAccessError("Data corruption detected: checksum mismatch")
+
             return graph
         except Exception as err:
             raise FileAccessError(f"Error reading file: {str(err)}") from err
 
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
-        """Save the knowledge graph to JSONL file atomically with buffered writes.
-
-        Args:
-            graph: KnowledgeGraph to save
-
-        Raises:
-            FileAccessError: If file cannot be written
-        """
+        """Save with checksum validation (backward compatible)"""
         temp_path = self.memory_path.with_suffix(".tmp")
-        buffer_size = 1000  # Number of lines to buffer before writing
+        buffer_size = 1000
+        hasher = hashlib.sha256()
 
         try:
-            async with aiofiles.open(temp_path, mode="w", encoding="utf-8") as f:
+            async with aiofiles.open(temp_path, mode="w+", encoding="utf-8") as f:
+                # Write placeholder header
+                await f.write(json.dumps({"checksum": "pending"}) + "\n")
+
+                # Write content and compute checksum
                 buffer = []
-                # Write entities
                 for entity in graph.entities:
                     line = json.dumps(
                         {
@@ -189,15 +253,15 @@ class JsonlBackend(Backend):
                         }
                     )
                     buffer.append(line)
+                    hasher.update(line.encode())
                     if len(buffer) >= buffer_size:
                         await f.write("\n".join(buffer) + "\n")
                         buffer = []
-                # Write remaining entities
+
                 if buffer:
                     await f.write("\n".join(buffer) + "\n")
                     buffer = []
 
-                # Write relations
                 for relation in graph.relations:
                     line = json.dumps(
                         {
@@ -208,12 +272,18 @@ class JsonlBackend(Backend):
                         }
                     )
                     buffer.append(line)
+                    hasher.update(line.encode())
                     if len(buffer) >= buffer_size:
                         await f.write("\n".join(buffer) + "\n")
                         buffer = []
-                # Write remaining relations
+
                 if buffer:
                     await f.write("\n".join(buffer) + "\n")
+
+                # Write actual checksum
+                checksum = hasher.hexdigest()
+                await f.seek(0)
+                await f.write(json.dumps({"checksum": checksum}) + "\n")
 
             temp_path.replace(self.memory_path)
         except Exception as err:
