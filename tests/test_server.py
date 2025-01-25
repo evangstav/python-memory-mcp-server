@@ -300,7 +300,7 @@ async def test_save_graph(mock_manager: MockManagerProtocol) -> None:
     # Verify our test entity exists
     assert any(e.name == "TestSave" for e in graph.entities)
     # Verify the save preserved the structure
-    assert isinstance(graph.entities[0].observations, list)
+    assert isinstance(graph.entities[0].observations, (list, tuple))  # Allow both list and tuple for immutability
 
 
 @pytest.mark.asyncio
