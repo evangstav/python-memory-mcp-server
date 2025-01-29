@@ -89,14 +89,25 @@ if not result.success:
 ### Search Memory
 ```python
 result = await session.call_tool("search_memory", {
-    "query": "example"
+    "query": "most recent workout"  # Supports natural language queries
 })
 if result.success:
-    results = result.data
-    print(f"Search results: {results}")
+    if result.error_type == "NO_RESULTS":
+        print(f"No results found: {result.error}")
+    else:
+        results = result.data
+        print(f"Search results: {results}")
 else:
     print(f"Error searching memory: {result.error}")
 ```
+
+The search functionality supports:
+- Temporal queries (e.g., "most recent", "last", "latest")
+- Activity queries (e.g., "workout", "exercise")
+- General entity searches
+
+When using temporal queries with activity types (e.g., "most recent workout"),
+the search will automatically return the latest matching activity.
 
 ### Delete Entities
 ```python

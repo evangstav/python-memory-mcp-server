@@ -20,6 +20,7 @@ ERROR_TYPES = {
     "INTERNAL_ERROR": "INTERNAL_ERROR",
     "ALREADY_EXISTS": "ALREADY_EXISTS",
     "INVALID_RELATION": "INVALID_RELATION",
+    "NO_RESULTS": "NO_RESULTS",  # Used when search returns no matches
 }
 
 
@@ -204,12 +205,47 @@ async def create_relation(
 
 @mcp.tool()
 async def search_memory(query: str, ctx: Context = None) -> EntityResponse:
-    """Search memory using a query string."""
+    """Search memory using natural language queries.
+
+    Handles:
+    - Temporal queries (e.g., "most recent", "last", "latest")
+    - Activity queries (e.g., "workout", "exercise")
+    - General entity searches
+    """
     try:
         if ctx:
             ctx.info(f"Searching for: {query}")
 
-        results = await kg.search_nodes(query)
+        # Handle temporal queries
+        temporal_keywords = ["recent", "last", "latest"]
+        is_temporal = any(keyword in query.lower() for keyword in temporal_keywords)
+
+        # Extract activity type from query
+        activity_type = None
+        if "workout" in query.lower():
+            activity_type = "workout"
+        elif "exercise" in query.lower():
+            activity_type = "exercise"
+        elif "physical activity" in query.lower():
+            activity_type = "physical_activity"
+
+        # Search for entities
+        results = await kg.search_nodes(activity_type if activity_type else query)
+
+        if not results:
+            return EntityResponse(
+                success=True,
+                data={"entities": [], "relations": []},
+                error="No matching activities found in memory",
+                error_type="NO_RESULTS",
+            )
+
+        # For temporal queries, sort by timestamp if available
+        if is_temporal and isinstance(results, list):
+            results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            if results:
+                results = results[0]  # Get most recent
+
         return EntityResponse(success=True, data=serialize_to_dict(results))
     except ValueError as e:
         return EntityResponse(
