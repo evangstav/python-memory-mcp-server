@@ -8,7 +8,7 @@ import pytest
 
 from memory_mcp_server.backends.jsonl import JsonlBackend
 from memory_mcp_server.exceptions import EntityNotFoundError
-from memory_mcp_server.interfaces import Entity, Relation
+from memory_mcp_server.interfaces import Entity, Relation, SearchOptions
 
 
 @pytest.fixture(scope="function")
@@ -23,12 +23,120 @@ async def jsonl_backend(tmp_path: Path) -> AsyncGenerator[JsonlBackend, None]:
 @pytest.mark.asyncio(scope="function")
 async def test_create_entities(jsonl_backend: JsonlBackend) -> None:
     """Test creating new entities."""
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_search(jsonl_backend: JsonlBackend) -> None:
+    """Test fuzzy search functionality."""
+    # Create test entities
     entities = [
+        Entity(
+            name="John Smith",
+            entityType="person",
+            observations=["Software engineer at Tech Corp"],
+        ),
+        Entity(
+            name="Jane Smith",
+            entityType="person",
+            observations=["Product manager at Tech Corp"],
+        ),
+        Entity(
+            name="Tech Corporation",
+            entityType="company",
+            observations=["A technology company"],
+        ),
+    ]
+    await jsonl_backend.create_entities(entities)
+
+    # Test exact match (backward compatibility)
+    result = await jsonl_backend.search_nodes("John")
+    assert len(result.entities) == 1
+    assert result.entities[0].name == "John Smith"
+
+    # Test fuzzy match with high threshold
+    options = SearchOptions(
+        fuzzy=True,
+        threshold=90,
+        weights={"name": 1.0, "type": 0.5, "observations": 0.3},
+    )
+    result = await jsonl_backend.search_nodes("Jon Smith", options)
+    assert len(result.entities) == 1
+    assert result.entities[0].name == "John Smith"
+
+    # Test fuzzy match with lower threshold
+    options = SearchOptions(fuzzy=True, threshold=70)
+    result = await jsonl_backend.search_nodes("Jane Smyth", options)
+    assert len(result.entities) == 1
+    assert result.entities[0].name == "Jane Smith"
+
+    # Test fuzzy match with observations
+    options = SearchOptions(
+        fuzzy=True,
+        threshold=60,
+        weights={"name": 0.3, "type": 0.3, "observations": 1.0},
+    )
+    result = await jsonl_backend.search_nodes("software dev", options)
+    assert len(result.entities) == 1
+    assert result.entities[0].name == "John Smith"
+
+    # Test no matches with high threshold
+    options = SearchOptions(fuzzy=True, threshold=95)
+    result = await jsonl_backend.search_nodes("Bob Jones", options)
+    assert len(result.entities) == 0
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_search_weights(jsonl_backend: JsonlBackend) -> None:
+    """Test fuzzy search with different weight configurations."""
+    # Clear any existing entities
+    await jsonl_backend.delete_entities(
+        [e.name for e in (await jsonl_backend.read_graph()).entities]
+    )
+
+    entities = [
+        Entity(
+            name="Programming Guide",
+            entityType="document",
+            observations=["A guide about software development"],
+        ),
+        Entity(
+            name="Software Manual",
+            entityType="document",
+            observations=["Programming tutorial and guide"],
+        ),
+    ]
+    await jsonl_backend.create_entities(entities)
+
+    # Test name-weighted search
+    name_options = SearchOptions(
+        fuzzy=True,
+        threshold=60,
+        weights={"name": 1.0, "type": 0.1, "observations": 0.1},
+    )
+    result = await jsonl_backend.search_nodes("programming", name_options)
+    assert len(result.entities) == 1
+    assert result.entities[0].name == "Programming Guide"
+
+    # Test observation-weighted search
+    obs_options = SearchOptions(
+        fuzzy=True,
+        threshold=60,
+        weights={"name": 0.1, "type": 0.1, "observations": 1.0},
+    )
+    result = await jsonl_backend.search_nodes("programming", obs_options)
+    assert len(result.entities) == 2
+    assert any(e.name == "Software Manual" for e in result.entities)
+
+    # Clear again for create_entities test
+    await jsonl_backend.delete_entities(
+        [e.name for e in (await jsonl_backend.read_graph()).entities]
+    )
+
+    test_entities = [
         Entity("test1", "person", ["observation1", "observation2"]),
         Entity("test2", "location", ["observation3"]),
     ]
-
-    result = await jsonl_backend.create_entities(entities)
+    result = await jsonl_backend.create_entities(test_entities)
     assert len(result) == 2
 
     # Verify entities were saved

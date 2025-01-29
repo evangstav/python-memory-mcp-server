@@ -4,14 +4,24 @@ import asyncio
 import json
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 import aiofiles
+from thefuzz import fuzz
 
 from ..exceptions import EntityNotFoundError, FileAccessError
-from ..interfaces import Entity, KnowledgeGraph, Relation
+from ..interfaces import Entity, KnowledgeGraph, Relation, SearchOptions
 from .base import Backend
+
+
+@dataclass
+class SearchResult:
+    """Internal class for tracking search results with scores."""
+
+    entity: Entity
+    score: float
 
 
 class JsonlBackend(Backend):
@@ -411,11 +421,77 @@ class JsonlBackend(Backend):
         """
         return await self._check_cache()
 
-    async def search_nodes(self, query: str) -> KnowledgeGraph:
+    def _calculate_fuzzy_score(
+        self, query: str, entity: Entity, weights: Dict[str, float]
+    ) -> float:
+        """Calculate fuzzy match score for an entity.
+
+        Args:
+            query: Search query string
+            entity: Entity to score
+            weights: Field weights for scoring
+
+        Returns:
+            Weighted average score (0-100)
+        """
+        name_weight = weights.get("name", 0)
+        type_weight = weights.get("type", 0)
+        obs_weight = weights.get("observations", 0)
+        total_weight = name_weight + type_weight + obs_weight
+
+        if total_weight == 0:
+            return 0.0
+
+        query = query.lower()
+
+        # Calculate name score using multiple ratios for better matching
+        name_score = 0
+        if name_weight > 0:
+            # Combine different fuzzy ratios for better name matching
+            token_sort = fuzz.token_sort_ratio(query, entity.name.lower())
+            token_set = fuzz.token_set_ratio(query, entity.name.lower())
+            partial = fuzz.partial_ratio(query, entity.name.lower())
+            name_score = max(token_sort, token_set, partial)
+
+        # Calculate type score using standard ratio
+        type_score = 0
+        if type_weight > 0:
+            type_score = fuzz.ratio(query, entity.entityType.lower())
+
+        # Calculate observation score using multiple matching strategies
+        obs_score = 0
+        if obs_weight > 0 and entity.observations:
+            obs_scores = []
+            for obs in entity.observations:
+                obs_lower = obs.lower()
+                # Try different matching strategies
+                token_sort = fuzz.token_sort_ratio(query, obs_lower)
+                token_set = fuzz.token_set_ratio(query, obs_lower)
+                partial = fuzz.partial_ratio(query, obs_lower)
+                # Take best match for this observation
+                obs_scores.append(max(token_sort, token_set, partial))
+            obs_score = max(obs_scores) if obs_scores else 0
+
+        # If any individual score exceeds threshold, boost the final score
+        max_score = (
+            max(
+                name_score * (name_weight / total_weight if total_weight > 0 else 0),
+                type_score * (type_weight / total_weight if total_weight > 0 else 0),
+                obs_score * (obs_weight / total_weight if total_weight > 0 else 0),
+            )
+            * total_weight
+        )
+
+        return max_score
+
+    async def search_nodes(
+        self, query: str, options: Optional[SearchOptions] = None
+    ) -> KnowledgeGraph:
         """Search for entities and relations matching query.
 
         Args:
             query: Search query string
+            options: Optional search configuration
 
         Returns:
             KnowledgeGraph containing matches
@@ -427,17 +503,163 @@ class JsonlBackend(Backend):
             raise ValueError("Search query cannot be empty")
 
         graph = await self._check_cache()
-        q = query.lower()
-        filtered_entities = set()
 
-        for entity in graph.entities:
-            if (
-                q in entity.name.lower()
-                or q in entity.entityType.lower()
-                or any(q in obs.lower() for obs in entity.observations)
-            ):
-                filtered_entities.add(entity)
+        # Use exact matching if no options provided or fuzzy is False
+        if not options or not options.fuzzy:
+            q = query.lower()
+            filtered_entities = set()
 
+            for entity in graph.entities:
+                if (
+                    q in entity.name.lower()
+                    or q in entity.entityType.lower()
+                    or any(q in obs.lower() for obs in entity.observations)
+                ):
+                    filtered_entities.add(entity)
+        else:
+            # Fuzzy search with scoring
+            search_results: List[SearchResult] = []
+
+            for entity in graph.entities:
+                # Get weights with defaults for no weights provided
+                weights = options.weights if options.weights else {"name": 1.0}
+                name_weight = weights.get("name", 0)
+                type_weight = weights.get("type", 0)
+                obs_weight = weights.get("observations", 0)
+                total_weight = name_weight + type_weight + obs_weight
+
+                if total_weight == 0:
+                    continue
+
+                query_lower = query.lower()
+                query_words = set(query_lower.split())
+
+                # Calculate scores for each field
+                name_score = 0
+                if name_weight > 0:
+                    name_lower = entity.name.lower()
+                    name_words = set(name_lower.split())
+
+                    # Calculate word-level similarity
+                    word_matches = sum(
+                        1
+                        for w in query_words
+                        if any(fuzz.ratio(w, nw) >= 85 for nw in name_words)
+                    )
+                    word_match_ratio = (
+                        word_matches / len(query_words) if query_words else 0
+                    )
+
+                    # Calculate token-based similarity
+                    token_score = fuzz.token_sort_ratio(query_lower, name_lower)
+
+                    # Combine scores based on threshold
+                    if options.threshold >= 90:
+                        # For high threshold, require high word match ratio
+                        name_score = token_score if word_match_ratio > 0.9 else 0
+                    else:
+                        # For lower threshold, use weighted combination
+                        name_score = (token_score * 0.6) + (
+                            word_match_ratio * 100 * 0.4
+                        )
+
+                type_score = 0
+                if type_weight > 0:
+                    type_score = fuzz.ratio(query_lower, entity.entityType.lower())
+
+                # Special handling for observation-weighted search
+                is_obs_primary = obs_weight > name_weight and obs_weight > type_weight
+
+                # Calculate observation score
+                obs_score = 0
+                if obs_weight > 0 and entity.observations:
+                    obs_scores = []
+                    for obs in entity.observations:
+                        obs_lower = obs.lower()
+                        # Calculate token-based similarity
+                        token_score = fuzz.token_set_ratio(query_lower, obs_lower)
+
+                        # Check for word presence
+                        word_presence = sum(1 for w in query_words if w in obs_lower)
+                        word_ratio = (
+                            word_presence / len(query_words) if query_words else 0
+                        )
+
+                        # Combine scores based on search type
+                        if is_obs_primary:
+                            # For observation-weighted search, prioritize word presence
+                            if word_ratio > 0:
+                                # Give high score if any words match
+                                obs_scores.append(max(90, token_score))
+                            else:
+                                # Still consider token matching
+                                obs_scores.append(token_score)
+                        else:
+                            # For regular search, balance token matching with word presence
+                            combined_score = (token_score * 0.7) + (
+                                word_ratio * 100 * 0.3
+                            )
+                            obs_scores.append(combined_score)
+
+                    obs_score = max(obs_scores) if obs_scores else 0
+
+                # For observation-weighted search, also consider name matches
+                if is_obs_primary and name_score >= options.threshold:
+                    # If name matches threshold, treat as observation match
+                    obs_score = max(obs_score, name_score)
+
+                # Calculate final scores
+                weighted_name = (
+                    (name_score * name_weight) / total_weight if total_weight > 0 else 0
+                )
+                weighted_type = (
+                    (type_score * type_weight) / total_weight if total_weight > 0 else 0
+                )
+                weighted_obs = (
+                    (obs_score * obs_weight) / total_weight if total_weight > 0 else 0
+                )
+
+                # Calculate max weight to determine primary field
+                max_weight = max(name_weight, type_weight, obs_weight)
+
+                # For name-weighted search (default or explicit)
+                if name_weight == max_weight:
+                    # Use stricter name matching
+                    qualifies = name_score >= options.threshold
+
+                # For observation-weighted search
+                elif obs_weight == max_weight:
+                    # More lenient matching for observations
+                    qualifies = (
+                        # Strong observation match
+                        obs_score >= options.threshold * 0.8
+                        or
+                        # Exact word match in name
+                        (
+                            name_score >= options.threshold
+                            and any(w in entity.name.lower() for w in query_words)
+                        )
+                    )
+
+                # For type-weighted search
+                elif type_weight == max_weight:
+                    qualifies = type_score >= options.threshold
+
+                # No primary field (should not happen with defaults)
+                else:
+                    qualifies = False
+
+                if qualifies:
+                    final_score = (weighted_name + weighted_type + weighted_obs) * 100
+                    search_results.append(
+                        SearchResult(entity=entity, score=final_score)
+                    )
+
+            # Sort by score descending
+            search_results.sort(key=lambda x: x.score, reverse=True)
+            filtered_entities = {result.entity for result in search_results}
+
+        # Filter relations to only include those between matched entities
         filtered_entity_names = {e.name for e in filtered_entities}
         filtered_relations = [
             relation
