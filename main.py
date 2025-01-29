@@ -1,26 +1,74 @@
-#!/usr/bin/env pythn3
+#!/usr/bin/env python3
 """Memory MCP server using FastMCP."""
 
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from loguru import logger as logging
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.prompts.base import Message, UserMessage
+from pydantic import BaseModel
 
 from memory_mcp_server.interfaces import Entity, Relation
 from memory_mcp_server.knowledge_graph_manager import KnowledgeGraphManager
 
-# Create FastMCP server with dependencies and environment variables
+# Error type constants
+ERROR_TYPES = {
+    "NOT_FOUND": "NOT_FOUND",
+    "VALIDATION_ERROR": "VALIDATION_ERROR",
+    "INTERNAL_ERROR": "INTERNAL_ERROR",
+    "ALREADY_EXISTS": "ALREADY_EXISTS",
+    "INVALID_RELATION": "INVALID_RELATION",
+}
+
+
+# Response models
+class EntityResponse(BaseModel):
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    error_type: Optional[str] = None
+
+
+class GraphResponse(BaseModel):
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    error_type: Optional[str] = None
+
+
+class OperationResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None
+    error_type: Optional[str] = None
+
+
+# Create FastMCP server with dependencies and instructions
 mcp = FastMCP(
     "Memory",
     dependencies=["pydantic", "jsonl"],
-    environment=["MEMORY_FILE_PATH"],
     version="0.1.0",
+    instructions="""
+    Memory MCP server providing knowledge graph functionality.
+    Available tools:
+    - get_entity: Retrieve entity by name
+    - get_graph: Get entire knowledge graph
+    - create_entities: Create multiple entities
+    - add_observation: Add observation to entity
+    - create_relation: Create relation between entities
+    - search_memory: Search entities by query
+    - delete_entities: Delete multiple entities
+    - delete_relation: Delete relation between entities
+    - flush_memory: Persist changes to storage
+    """,
 )
 
 # Initialize knowledge graph manager using environment variable
 memory_file = Path(os.getenv("MEMORY_FILE_PATH", "memory.jsonl"))
 kg = KnowledgeGraphManager(memory_file, 60)
+
+logging.info(f"Memory server initialized with file: {memory_file}")
 
 
 def serialize_to_dict(obj: Any) -> Dict:
@@ -33,158 +81,251 @@ def serialize_to_dict(obj: Any) -> Dict:
         return str(obj)
 
 
-@mcp.resource("memory://{entity_name}")
-async def get_entity(entity_name: str) -> Dict[str, Any]:
+@mcp.tool()
+async def get_entity(entity_name: str) -> EntityResponse:
     """Get entity by name from memory."""
     try:
         result = await kg.search_nodes(entity_name)
         if result:
-            return {"success": True, "data": serialize_to_dict(result)}
-        return {"success": False, "error": f"Entity '{entity_name}' not found"}
+            return EntityResponse(success=True, data=serialize_to_dict(result))
+        return EntityResponse(
+            success=False,
+            error=f"Entity '{entity_name}' not found",
+            error_type=ERROR_TYPES["NOT_FOUND"],
+        )
+    except ValueError as e:
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
     except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@mcp.resource("memory://graph")
-async def get_graph() -> Dict[str, Any]:
-    """Get the entire knowledge graph."""
-    try:
-        graph = await kg.read_graph()
-        return {"success": True, "data": serialize_to_dict(graph)}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.tool()
-async def create_entity(
-    name: str,
-    entity_type: str,
-    observations: Optional[List[str]] = None,
-    ctx: Context = None,
-) -> Dict[str, Any]:
-    """Create a new entity in the knowledge graph."""
+async def get_graph() -> GraphResponse:
+    """Get the entire knowledge graph."""
     try:
-        if ctx:
-            ctx.info(f"Creating entity: {name} of type {entity_type}")
-
-        obs_list = [] if observations is None else observations
-        entities = await kg.create_entities(
-            [Entity(name=name, entityType=entity_type, observations=obs_list)]
-        )
-        return {"success": True, "created": [serialize_to_dict(e) for e in entities]}
+        graph = await kg.read_graph()
+        return GraphResponse(success=True, data=serialize_to_dict(graph))
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return GraphResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
+
+
+@mcp.tool()
+async def create_entities(entities: List[Entity]) -> OperationResponse:
+    """Create multiple new entities."""
+    try:
+        await kg.create_entities(entities)
+        return OperationResponse(success=True)
+    except ValueError as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
+    except Exception as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.tool()
 async def add_observation(
     entity: str, observation: str, ctx: Context = None
-) -> Dict[str, Any]:
+) -> OperationResponse:
     """Add an observation to an existing entity."""
     try:
         if ctx:
             ctx.info(f"Adding observation to {entity}")
 
+        # Check if entity exists
+        exists = await kg.search_nodes(entity)
+        if not exists:
+            return OperationResponse(
+                success=False,
+                error=f"Entity '{entity}' not found",
+                error_type=ERROR_TYPES["NOT_FOUND"],
+            )
+
         await kg.add_observations(entity, [observation])
-        return {"success": True, "entity": entity}
+        return OperationResponse(success=True)
+    except ValueError as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.tool()
 async def create_relation(
     from_entity: str, to_entity: str, relation_type: str, ctx: Context = None
-) -> Dict[str, Any]:
+) -> OperationResponse:
     """Create a relation between entities."""
     try:
         if ctx:
             ctx.info(f"Creating relation: {from_entity} -{relation_type}-> {to_entity}")
 
-        relations = await kg.create_relations(
+        # Check if entities exist
+        from_exists = await kg.search_nodes(from_entity)
+        to_exists = await kg.search_nodes(to_entity)
+
+        if not from_exists:
+            return OperationResponse(
+                success=False,
+                error=f"Source entity '{from_entity}' not found",
+                error_type=ERROR_TYPES["NOT_FOUND"],
+            )
+
+        if not to_exists:
+            return OperationResponse(
+                success=False,
+                error=f"Target entity '{to_entity}' not found",
+                error_type=ERROR_TYPES["NOT_FOUND"],
+            )
+
+        await kg.create_relations(
             [Relation(from_=from_entity, to=to_entity, relationType=relation_type)]
         )
-        return {"success": True, "created": [serialize_to_dict(r) for r in relations]}
+        return OperationResponse(success=True)
+    except ValueError as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.tool()
-async def search_memory(query: str, ctx: Context = None) -> Dict[str, Any]:
+async def search_memory(query: str, ctx: Context = None) -> EntityResponse:
     """Search memory using a query string."""
     try:
         if ctx:
             ctx.info(f"Searching for: {query}")
 
         results = await kg.search_nodes(query)
-        return {"success": True, "results": serialize_to_dict(results)}
+        return EntityResponse(success=True, data=serialize_to_dict(results))
+    except ValueError as e:
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.tool()
-async def delete_entities(names: List[str], ctx: Context = None) -> Dict[str, Any]:
+async def delete_entities(names: List[str], ctx: Context = None) -> OperationResponse:
     """Delete multiple entities and their relations."""
     try:
         if ctx:
             ctx.info(f"Deleting entities: {', '.join(names)}")
 
-        deleted = await kg.delete_entities(names)
-        return {"success": True, "deleted": deleted}
+        await kg.delete_entities(names)
+        return OperationResponse(success=True)
+    except ValueError as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.tool()
 async def delete_relation(
     from_entity: str, to_entity: str, ctx: Context = None
-) -> Dict[str, Any]:
+) -> OperationResponse:
     """Delete relations between two entities."""
     try:
         if ctx:
             ctx.info(f"Deleting relations between {from_entity} and {to_entity}")
 
+        # Check if entities exist
+        from_exists = await kg.search_nodes(from_entity)
+        to_exists = await kg.search_nodes(to_entity)
+
+        if not from_exists:
+            return OperationResponse(
+                success=False,
+                error=f"Source entity '{from_entity}' not found",
+                error_type=ERROR_TYPES["NOT_FOUND"],
+            )
+
+        if not to_exists:
+            return OperationResponse(
+                success=False,
+                error=f"Target entity '{to_entity}' not found",
+                error_type=ERROR_TYPES["NOT_FOUND"],
+            )
+
         await kg.delete_relations(from_entity, to_entity)
-        return {"success": True}
+        return OperationResponse(success=True)
+    except ValueError as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.tool()
-async def flush_memory(ctx: Context = None) -> Dict[str, Any]:
+async def flush_memory(ctx: Context = None) -> OperationResponse:
     """Ensure all changes are persisted to storage."""
     try:
         if ctx:
             ctx.info("Flushing memory to storage")
 
         await kg.flush()
-        return {"success": True}
+        return OperationResponse(success=True)
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.prompt()
-def create_entity_prompt(name: str, entity_type: str) -> str:
+def create_entity_prompt(name: str, entity_type: str) -> list[Message]:
     """Generate prompt for entity creation."""
-    return f"""I want to create a new entity in memory:
-Name: {name}
-Type: {entity_type}
-
-What observations should I record about this entity?"""
+    return [
+        UserMessage(
+            f"I want to create a new entity in memory:\n"
+            f"Name: {name}\n"
+            f"Type: {entity_type}\n\n"
+            f"What observations should I record about this entity?"
+        )
+    ]
 
 
 @mcp.prompt()
-def search_prompt(query: str) -> str:
+def search_prompt(query: str) -> list[Message]:
     """Generate prompt for memory search."""
-    return f"""I want to search my memory for information about: {query}
-
-What specific aspects of these results would you like me to explain?"""
+    return [
+        UserMessage(
+            f"I want to search my memory for information about: {query}\n\n"
+            f"What specific aspects of these results would you like me to explain?"
+        )
+    ]
 
 
 @mcp.prompt()
-def relation_prompt(from_entity: str, to_entity: str) -> str:
+def relation_prompt(from_entity: str, to_entity: str) -> list[Message]:
     """Generate prompt for creating a relation."""
-    return f"""I want to establish a relationship between:
-Source: {from_entity}
-Target: {to_entity}
-
-What type of relationship exists between these entities?"""
+    return [
+        UserMessage(
+            f"I want to establish a relationship between:\n"
+            f"Source: {from_entity}\n"
+            f"Target: {to_entity}\n\n"
+            f"What type of relationship exists between these entities?"
+        )
+    ]

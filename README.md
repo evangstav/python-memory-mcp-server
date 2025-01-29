@@ -1,141 +1,170 @@
 # Memory MCP Server
 
-[![CI](https://github.com/estav/python-memory-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/estav/python-memory-mcp-server/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/estav/python-memory-mcp-server/branch/main/graph/badge.svg)](https://codecov.io/gh/estav/python-memory-mcp-server)
-
-An implementation of the Model Context Protocol (MCP) server for managing Claude's memory and knowledge graph.
+A Model Context Protocol (MCP) server that provides knowledge graph functionality for managing entities, relations, and observations in memory.
 
 ## Installation
 
-You can install the package using `uv`:
+Install the server in Claude Desktop:
 
 ```bash
-uvx memory-mcp-server
-```
-
-Or install it from the repository:
-
-```bash
-uv pip install git+https://github.com/estav/python-memory-mcp-server.git
+mcp install main.py -v MEMORY_FILE_PATH=/path/to/memory.jsonl
 ```
 
 ## Usage
 
-Once installed, you can run the server using:
+The server provides tools for managing a knowledge graph:
 
-```bash
-uvx memory-mcp-server
+### Get Entity
+```python
+result = await session.call_tool("get_entity", {
+    "entity_name": "example"
+})
+if not result.success:
+    if result.error_type == "NOT_FOUND":
+        print(f"Entity not found: {result.error}")
+    elif result.error_type == "VALIDATION_ERROR":
+        print(f"Invalid input: {result.error}")
+    else:
+        print(f"Error: {result.error}")
+else:
+    entity = result.data
+    print(f"Found entity: {entity}")
 ```
 
-### Configuration
-
-The server uses a JSONL file for storage:
-
-```bash
-# Use default memory.jsonl in package directory
-memory-mcp-server
-
-# Specify custom file location
-memory-mcp-server --path /path/to/memory.jsonl
-
-# Configure cache TTL (default: 60 seconds)
-memory-mcp-server --path /path/to/memory.jsonl --cache-ttl 120
+### Get Graph
+```python
+result = await session.call_tool("get_graph", {})
+if result.success:
+    graph = result.data
+    print(f"Graph data: {graph}")
+else:
+    print(f"Error retrieving graph: {result.error}")
 ```
 
-### Integration with Claude Desktop
-
-To use this MCP server with Claude Desktop, add the following to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "memory": {
-      "command": "uvx",
-      "args": ["memory-mcp-server"]
-    }
-  }
-}
+### Create Entities
+```python
+entities = [
+    Entity(name="example1", type="person"),
+    Entity(name="example2", type="location")
+]
+result = await session.call_tool("create_entities", {
+    "entities": entities
+})
+if not result.success:
+    if result.error_type == "VALIDATION_ERROR":
+        print(f"Invalid entity data: {result.error}")
+    else:
+        print(f"Error creating entities: {result.error}")
 ```
 
-## Development
-
-1. Clone the repository:
-```bash
-git clone https://github.com/estav/python-memory-mcp-server.git
-cd python-memory-mcp-server
+### Add Observation
+```python
+result = await session.call_tool("add_observation", {
+    "entity": "example",
+    "observation": "This is a new observation"
+})
+if not result.success:
+    if result.error_type == "NOT_FOUND":
+        print(f"Entity not found: {result.error}")
+    else:
+        print(f"Error adding observation: {result.error}")
 ```
 
-2. Create a virtual environment and install dependencies:
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e ".[test]"  # Include test dependencies
+### Create Relation
+```python
+result = await session.call_tool("create_relation", {
+    "from_entity": "person1",
+    "to_entity": "location1",
+    "relation_type": "visited"
+})
+if not result.success:
+    if result.error_type == "NOT_FOUND":
+        print(f"Entity not found: {result.error}")
+    elif result.error_type == "VALIDATION_ERROR":
+        print(f"Invalid relation data: {result.error}")
+    else:
+        print(f"Error creating relation: {result.error}")
 ```
 
-3. Install pre-commit hooks:
-```bash
-pre-commit install
+### Search Memory
+```python
+result = await session.call_tool("search_memory", {
+    "query": "example"
+})
+if result.success:
+    results = result.data
+    print(f"Search results: {results}")
+else:
+    print(f"Error searching memory: {result.error}")
 ```
 
-4. Run tests:
-```bash
-pytest                    # Run all tests
-pytest -v                # Run with verbose output
-pytest -v --cov         # Run with coverage report
+### Delete Entities
+```python
+result = await session.call_tool("delete_entities", {
+    "names": ["example1", "example2"]
+})
+if not result.success:
+    if result.error_type == "NOT_FOUND":
+        print(f"Entity not found: {result.error}")
+    else:
+        print(f"Error deleting entities: {result.error}")
 ```
 
-5. Run the server locally:
-```bash
-python -m memory_mcp_server  # Run with default memory.jsonl
+### Delete Relation
+```python
+result = await session.call_tool("delete_relation", {
+    "from_entity": "person1",
+    "to_entity": "location1"
+})
+if not result.success:
+    if result.error_type == "NOT_FOUND":
+        print(f"Entity not found: {result.error}")
+    else:
+        print(f"Error deleting relation: {result.error}")
 ```
 
-## Testing
-
-The project uses pytest for testing. The test suite includes:
-
-### Unit Tests
-- `test_knowledge_graph_manager.py`: Tests for knowledge graph operations
-- `test_server.py`: Tests for MCP server implementation
-- `test_backends/`: Tests for backend implementations
-  - `test_jsonl.py`: JSONL backend tests
-
-### Running Tests
-```bash
-# Run all tests
-pytest
-
-# Run with coverage report
-pytest --cov=memory_mcp_server
-
-# Run specific test file
-pytest tests/test_server.py
-
-# Run tests with verbose output
-pytest -v
+### Flush Memory
+```python
+result = await session.call_tool("flush_memory", {})
+if not result.success:
+    print(f"Error flushing memory: {result.error}")
 ```
 
-### Test Fixtures
-The `conftest.py` file provides common test fixtures:
-- `temp_jsonl_path`: Creates a temporary JSONL file
-- `knowledge_graph_manager`: Provides a KnowledgeGraphManager instance
+## Error Types
 
-## Code Quality
+The server uses the following error types:
 
-The project uses several tools to maintain code quality:
+- `NOT_FOUND`: Entity or resource not found
+- `VALIDATION_ERROR`: Invalid input data
+- `INTERNAL_ERROR`: Server-side error
+- `ALREADY_EXISTS`: Resource already exists
+- `INVALID_RELATION`: Invalid relation between entities
 
-- **Ruff**: Fast Python linter
-- **MyPy**: Static type checking
-- **Pre-commit hooks**: Automated code quality checks
-- **Interrogate**: Docstring coverage checking
+## Response Models
 
-## Contributing
+All tools return typed responses using these models:
 
-Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to this project.
+### EntityResponse
+```python
+class EntityResponse(BaseModel):
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    error_type: Optional[str] = None
+```
 
-## Changelog
+### GraphResponse
+```python
+class GraphResponse(BaseModel):
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    error_type: Optional[str] = None
+```
 
-See [CHANGELOG.md](CHANGELOG.md) for a list of changes and version history.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+### OperationResponse
+```python
+class OperationResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None
+    error_type: Optional[str] = None
