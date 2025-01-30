@@ -5,9 +5,9 @@ from typing import List
 
 import pytest
 
-from memory_mcp_server.exceptions import EntityNotFoundError
 from memory_mcp_server.interfaces import Entity, Relation
 from memory_mcp_server.knowledge_graph_manager import KnowledgeGraphManager
+from memory_mcp_server.validation import EntityValidationError, ValidationError
 
 
 @pytest.mark.asyncio(scope="function")
@@ -24,8 +24,8 @@ async def test_create_entities(
     print("\nStarting test_create_entities")
     entities = [
         Entity(
-            name="John",
-            entityType="Person",
+            name="john-doe",
+            entityType="person",
             observations=["loves pizza"],
         )
     ]
@@ -37,7 +37,7 @@ async def test_create_entities(
     graph = await knowledge_graph_manager.read_graph()
     print("Read graph")
     assert len(graph.entities) == 1
-    assert graph.entities[0].name == "John"
+    assert graph.entities[0].name == "john-doe"
 
     print("test_create_entities: Complete")
 
@@ -56,19 +56,19 @@ async def test_create_relations(
     print("\nStarting test_create_relations")
 
     entities = [
-        Entity(name="Alice", entityType="Person", observations=["test"]),
-        Entity(name="Bob", entityType="Person", observations=["test"]),
+        Entity(name="alice-smith", entityType="person", observations=["test"]),
+        Entity(name="bob-jones", entityType="person", observations=["test"]),
     ]
     await knowledge_graph_manager.create_entities(entities)
     print("Created entities")
 
-    relations = [Relation(from_="Alice", to="Bob", relationType="friends")]
+    relations = [Relation(from_="alice-smith", to="bob-jones", relationType="knows")]
     created_relations = await knowledge_graph_manager.create_relations(relations)
     print("Created relations")
 
     assert len(created_relations) == 1
-    assert created_relations[0].from_ == "Alice"
-    assert created_relations[0].to == "Bob"
+    assert created_relations[0].from_ == "alice-smith"
+    assert created_relations[0].to == "bob-jones"
 
     print("test_create_relations: Complete")
 
@@ -88,32 +88,30 @@ async def test_search_functionality(
     # Create test entities with varied data
     entities = [
         Entity(
-            name="SearchTest1",
-            entityType="TestEntity",
+            name="search-test-1",
+            entityType="project",
             observations=["keyword1", "unique1"],
         ),
-        Entity(name="SearchTest2", entityType="TestEntity", observations=["keyword2"]),
-        Entity(
-            name="DifferentType", entityType="OtherEntity", observations=["keyword1"]
-        ),
+        Entity(name="search-test-2", entityType="project", observations=["keyword2"]),
+        Entity(name="different-type", entityType="document", observations=["keyword1"]),
     ]
     await knowledge_graph_manager.create_entities(entities)
 
     # Test search by name
-    name_result = await knowledge_graph_manager.search_nodes("SearchTest")
+    name_result = await knowledge_graph_manager.search_nodes("search-test")
     assert len(name_result.entities) == 2
-    assert all("SearchTest" in e.name for e in name_result.entities)
+    assert all("search-test" in e.name for e in name_result.entities)
 
     # Test search by type
-    type_result = await knowledge_graph_manager.search_nodes("OtherEntity")
+    type_result = await knowledge_graph_manager.search_nodes("document")
     assert len(type_result.entities) == 1
-    assert type_result.entities[0].name == "DifferentType"
+    assert type_result.entities[0].name == "different-type"
 
     # Test search by observation
     obs_result = await knowledge_graph_manager.search_nodes("keyword1")
     assert len(obs_result.entities) == 2
-    assert any(e.name == "SearchTest1" for e in obs_result.entities)
-    assert any(e.name == "DifferentType" for e in obs_result.entities)
+    assert any(e.name == "search-test-1" for e in obs_result.entities)
+    assert any(e.name == "different-type" for e in obs_result.entities)
 
 
 @pytest.mark.asyncio(scope="function")
@@ -129,15 +127,19 @@ async def test_error_handling(
     4. Deleting non-existent entities
     """
     # Test invalid entity name
-    with pytest.raises(ValueError, match="Invalid entity"):
+    with pytest.raises(EntityValidationError, match="Invalid entity name"):
         await knowledge_graph_manager.create_entities(
-            [Entity(name="", entityType="Test", observations=[])]
+            [Entity(name="Invalid Name", entityType="person", observations=[])]
         )
 
     # Test relation with non-existent entity
-    with pytest.raises(EntityNotFoundError):
+    with pytest.raises(ValidationError, match="Source entity not found"):
         await knowledge_graph_manager.create_relations(
-            [Relation(from_="NonExistent", to="AlsoNonExistent", relationType="test")]
+            [
+                Relation(
+                    from_="non-existent", to="also-non-existent", relationType="knows"
+                )
+            ]
         )
 
     # Test deleting empty list
@@ -145,7 +147,7 @@ async def test_error_handling(
         await knowledge_graph_manager.delete_entities([])
 
     # Test deleting non-existent entities
-    result = await knowledge_graph_manager.delete_entities(["nonexistent"])
+    result = await knowledge_graph_manager.delete_entities(["non-existent"])
     assert result == []
 
 
@@ -161,7 +163,9 @@ async def test_graph_persistence(
     3. New observations persist after a graph reload
     """
     # Create initial data
-    entity = Entity(name="PersistenceTest", entityType="Test", observations=["initial"])
+    entity = Entity(
+        name="persistence-test", entityType="project", observations=["initial"]
+    )
     await knowledge_graph_manager.create_entities([entity])
 
     # Force a reload of the graph by clearing the cache
@@ -170,7 +174,7 @@ async def test_graph_persistence(
     # Verify data persists
     graph = await knowledge_graph_manager.read_graph()
     assert len(graph.entities) == 1
-    assert graph.entities[0].name == "PersistenceTest"
+    assert graph.entities[0].name == "persistence-test"
     assert "initial" in graph.entities[0].observations
 
 
@@ -189,15 +193,15 @@ async def test_concurrent_operations(
     # Create multiple entities concurrently
     async def create_entity(index: int) -> List[Entity]:
         entity = Entity(
-            name=f"Concurrent{index}",
-            entityType="Test",
+            name=f"concurrent-{index}",
+            entityType="project",
             observations=[f"obs{index}"],
         )
         return await knowledge_graph_manager.create_entities([entity])
 
     # Delete entities concurrently
     async def delete_entity(index: int) -> List[str]:
-        return await knowledge_graph_manager.delete_entities([f"Concurrent{index}"])
+        return await knowledge_graph_manager.delete_entities([f"concurrent-{index}"])
 
     # First create 5 entities
     create_tasks = [create_entity(i) for i in range(5)]
@@ -219,6 +223,6 @@ async def test_concurrent_operations(
 
     # Verify final state
     graph = await knowledge_graph_manager.read_graph()
-    expected_names = {"Concurrent5", "Concurrent6", "Concurrent3", "Concurrent4"}
+    expected_names = {"concurrent-5", "concurrent-6", "concurrent-3", "concurrent-4"}
     assert len(graph.entities) == 4
     assert all(e.name in expected_names for e in graph.entities)

@@ -66,10 +66,14 @@ mcp = FastMCP(
 )
 
 # Initialize knowledge graph manager using environment variable
-memory_file = Path(os.getenv("MEMORY_FILE_PATH", "memory.jsonl"))
-kg = KnowledgeGraphManager(memory_file, 60)
+# Default to ~/.claude/memory.jsonl if MEMORY_FILE_PATH not set
+default_memory_path = Path.home() / ".claude" / "memory.jsonl"
+memory_file = Path(os.getenv("MEMORY_FILE_PATH", str(default_memory_path)))
 
-logging.info(f"Memory server initialized with file: {memory_file}")
+logging.info(f"Memory server using file: {memory_file}")
+
+# Create KnowledgeGraphManager instance
+kg = KnowledgeGraphManager(memory_file, 60)
 
 
 def serialize_to_dict(obj: Any) -> Dict:

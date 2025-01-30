@@ -7,7 +7,7 @@ from typing import AsyncGenerator
 import pytest
 
 from memory_mcp_server.backends.jsonl import JsonlBackend
-from memory_mcp_server.exceptions import EntityNotFoundError
+from memory_mcp_server.exceptions import EntityNotFoundError, FileAccessError
 from memory_mcp_server.interfaces import Entity, Relation, SearchOptions
 
 
@@ -445,3 +445,46 @@ async def test_delete_relations_missing_entity(jsonl_backend: JsonlBackend) -> N
     """Test deleting relations with missing entities."""
     with pytest.raises(EntityNotFoundError):
         await jsonl_backend.delete_relations("ghost", "nonexistent")
+
+
+@pytest.mark.asyncio
+async def test_file_access_error_propagation(tmp_path: Path) -> None:
+    """Test that file access errors are properly propagated."""
+    file_path = tmp_path / "test_error.jsonl"
+
+    # Create a directory with the same name to cause a file access error
+    file_path.mkdir()
+
+    # Initialize should fail since the path is a directory
+    backend = JsonlBackend(file_path)
+    with pytest.raises(FileAccessError) as exc_info:
+        await backend.initialize()
+    assert "is a directory" in str(exc_info.value)
+
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_corrupted_file_handling(tmp_path: Path) -> None:
+    """Test handling of corrupted JSONL files."""
+    file_path = tmp_path / "corrupted.jsonl"
+
+    # Create a file with invalid JSON
+    with open(file_path, "w") as f:
+        f.write(
+            '{"type": "entity", "name": "test1", "entityType": "test", '
+            '"observations": []}\n'
+        )  # Valid JSON
+        f.write(
+            '{"type": "relation", "from": "test1", "to": "test2"'  # Invalid JSON
+        )  # Invalid JSON - missing closing brace
+
+    backend = JsonlBackend(file_path)
+    await backend.initialize()
+
+    # Reading corrupted file should raise FileAccessError
+    with pytest.raises(FileAccessError) as exc_info:
+        await backend.read_graph()
+    assert "Error loading graph: Expecting ',' delimiter" in str(exc_info.value)
+
+    await backend.close()

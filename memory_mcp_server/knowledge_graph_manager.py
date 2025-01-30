@@ -2,11 +2,12 @@
 
 import asyncio
 from pathlib import Path
-from typing import List, Union
+from typing import List, Optional, Union
 
 from .backends.base import Backend
 from .backends.jsonl import JsonlBackend
-from .interfaces import Entity, KnowledgeGraph, Relation
+from .interfaces import Entity, KnowledgeGraph, Relation, SearchOptions
+from .validation import KnowledgeGraphValidator, ValidationError
 
 
 class KnowledgeGraphManager:
@@ -48,7 +49,28 @@ class KnowledgeGraphManager:
 
         Returns:
             List of successfully created entities
+
+        Raises:
+            ValidationError: If any entity fails validation
         """
+        # Validate all entities first
+        for entity in entities:
+            KnowledgeGraphValidator.validate_entity(entity)
+
+        # Check for duplicate names in new entities
+        names = set()
+        for entity in entities:
+            if entity.name in names:
+                raise ValidationError(f"Duplicate entity name in batch: {entity.name}")
+            names.add(entity.name)
+
+        # Check for conflicts with existing entities
+        graph = await self.read_graph()
+        existing_names = {entity.name for entity in graph.entities}
+        conflicts = names.intersection(existing_names)
+        if conflicts:
+            raise ValidationError(f"Entities already exist: {', '.join(conflicts)}")
+
         async with self._write_lock:
             return await self.backend.create_entities(entities)
 
@@ -93,7 +115,29 @@ class KnowledgeGraphManager:
 
         Returns:
             List of successfully created relations
+
+        Raises:
+            ValidationError: If any relation fails validation
+            EntityNotFoundError: If referenced entities don't exist
         """
+        # Validate all relations first
+        for relation in relations:
+            KnowledgeGraphValidator.validate_relation(relation)
+
+        # Get existing graph to validate entity existence and check for cycles
+        graph = await self.read_graph()
+        existing_names = {entity.name for entity in graph.entities}
+
+        # Verify all referenced entities exist
+        for relation in relations:
+            if relation.from_ not in existing_names:
+                raise ValidationError(f"Source entity not found: {relation.from_}")
+            if relation.to not in existing_names:
+                raise ValidationError(f"Target entity not found: {relation.to}")
+
+        # Check for cycles including existing relations
+        KnowledgeGraphValidator.validate_no_cycles(relations, graph.relations)
+
         async with self._write_lock:
             return await self.backend.create_relations(relations)
 
@@ -105,19 +149,23 @@ class KnowledgeGraphManager:
         """
         return await self.backend.read_graph()
 
-    async def search_nodes(self, query: str) -> KnowledgeGraph:
+    async def search_nodes(
+        self, query: str, options: Optional[SearchOptions] = None
+    ) -> KnowledgeGraph:
         """Search for entities and relations matching query.
 
         Args:
             query: Search query string
+            options: Optional SearchOptions for configuring search behavior.
+                    If None, uses exact substring matching.
 
         Returns:
             KnowledgeGraph containing matches
 
         Raises:
-            ValueError: If query is empty
+            ValueError: If query is empty or options are invalid
         """
-        return await self.backend.search_nodes(query)
+        return await self.backend.search_nodes(query, options)
 
     async def flush(self) -> None:
         """Ensure any pending changes are persisted."""
@@ -132,7 +180,26 @@ class KnowledgeGraphManager:
 
         Raises:
             EntityNotFoundError: If the entity is not found
+            ValidationError: If observations are invalid
             ValueError: If observations list is empty
         """
+        if not observations:
+            raise ValueError("Observations list cannot be empty")
+
+        # Validate new observations
+        KnowledgeGraphValidator.validate_observations(observations)
+
+        # Get existing entity to check for duplicate observations
+        graph = await self.read_graph()
+        entity = next((e for e in graph.entities if e.name == entity_name), None)
+        if not entity:
+            raise ValidationError(f"Entity not found: {entity_name}")
+
+        # Check for duplicates against existing observations
+        existing_observations = set(entity.observations)
+        duplicates = [obs for obs in observations if obs in existing_observations]
+        if duplicates:
+            raise ValidationError(f"Duplicate observations: {', '.join(duplicates)}")
+
         async with self._write_lock:
             await self.backend.add_observations(entity_name, observations)

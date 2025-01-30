@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import List
 
-from ..interfaces import Entity, KnowledgeGraph, Relation
+from ..interfaces import Entity, KnowledgeGraph, Relation, SearchOptions
 
 
 class Backend(ABC):
@@ -78,14 +78,21 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    async def search_nodes(self, query: str) -> KnowledgeGraph:
+    async def search_nodes(
+        self, query: str, options: SearchOptions = None
+    ) -> KnowledgeGraph:
         """Search for entities and relations matching the query.
 
         Args:
             query: Search query string
+            options: Optional SearchOptions for configuring search behavior.
+                    If None, uses exact substring matching.
 
         Returns:
             KnowledgeGraph containing matching entities and relations
+
+        Raises:
+            ValueError: If query is empty or options are invalid
         """
         pass
 

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Fuzzy search capability for knowledge graph queries
+  - New `SearchOptions` class for configuring search behavior
+  - Configurable similarity threshold and field weights
+  - Backward compatible with existing exact matching
+  - Improved search relevance with weighted scoring
+
 ## [0.2.0] - 2024-01-07
 
 ### Added

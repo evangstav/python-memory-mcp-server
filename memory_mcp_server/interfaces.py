@@ -1,7 +1,18 @@
 """Interface definitions for the memory MCP server."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple
+
+
+@dataclass
+class SearchOptions:
+    """Options for configuring knowledge graph search behavior."""
+
+    fuzzy: bool = False
+    threshold: int = 80  # Similarity threshold (0-100)
+    weights: Dict[str, float] = field(
+        default_factory=lambda: {"name": 1.0, "type": 0.8, "observations": 0.6}
+    )
 
 
 @dataclass(frozen=True)  # Make it hashable by adding frozen=True

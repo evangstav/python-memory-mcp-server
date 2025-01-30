@@ -131,9 +131,12 @@ class JsonlBackend(Backend):
                         self._cache_file_mtime = file_mtime
                         self._build_indices(graph)
                         self._dirty = False
-                    except Exception:
-                        empty_graph = KnowledgeGraph(entities=[], relations=[])
-                        return empty_graph
+                    except FileAccessError:
+                        # Propagate file access errors
+                        raise
+                    except Exception as e:
+                        # Convert unexpected errors to FileAccessError
+                        raise FileAccessError(f"Error loading graph: {str(e)}") from e
 
         return cast(KnowledgeGraph, self._cache)
 
@@ -174,8 +177,12 @@ class JsonlBackend(Backend):
                                     relationType=item["relationType"],
                                 )
                             )
-                    except (json.JSONDecodeError, KeyError):
-                        continue
+                    except json.JSONDecodeError as e:
+                        raise FileAccessError(f"Error loading graph: {str(e)}") from e
+                    except KeyError as e:
+                        raise FileAccessError(
+                            f"Error loading graph: Missing required key {str(e)}"
+                        ) from e
             return graph
         except Exception as err:
             raise FileAccessError(f"Error reading file: {str(err)}") from err
@@ -595,10 +602,10 @@ class JsonlBackend(Backend):
                                 # Still consider token matching
                                 obs_scores.append(token_score)
                         else:
-                            # For regular search, balance token matching with word presence
-                            combined_score = (token_score * 0.7) + (
-                                word_ratio * 100 * 0.3
-                            )
+                            # Balance token matching (70%) with word presence (30%)
+                            token_weight = token_score * 0.7
+                            word_weight = word_ratio * 100 * 0.3
+                            combined_score = token_weight + word_weight
                             obs_scores.append(combined_score)
 
                     obs_score = max(obs_scores) if obs_scores else 0

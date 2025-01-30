@@ -1,6 +1,6 @@
 # Memory MCP Server
 
-A Model Context Protocol (MCP) server that provides knowledge graph functionality for managing entities, relations, and observations in memory.
+A Model Context Protocol (MCP) server that provides knowledge graph functionality for managing entities, relations, and observations in memory, with strict validation rules to maintain data consistency.
 
 ## Installation
 
@@ -9,6 +9,49 @@ Install the server in Claude Desktop:
 ```bash
 mcp install main.py -v MEMORY_FILE_PATH=/path/to/memory.jsonl
 ```
+
+## Data Validation Rules
+
+### Entity Names
+- Must start with a lowercase letter
+- Can contain lowercase letters, numbers, and hyphens
+- Maximum length of 100 characters
+- Must be unique within the graph
+- Example valid names: `python-project`, `meeting-notes-2024`, `user-john`
+
+### Entity Types
+The following entity types are supported:
+- `person`: Human entities
+- `concept`: Abstract ideas or principles
+- `project`: Work initiatives or tasks
+- `document`: Any form of documentation
+- `tool`: Software tools or utilities
+- `organization`: Companies or groups
+- `location`: Physical or virtual places
+- `event`: Time-bound occurrences
+
+### Observations
+- Non-empty strings
+- Maximum length of 500 characters
+- Must be unique per entity
+- Should be factual and objective statements
+- Include timestamp when relevant
+
+### Relations
+The following relation types are supported:
+- `knows`: Person to person connection
+- `contains`: Parent/child relationship
+- `uses`: Entity utilizing another entity
+- `created`: Authorship/creation relationship
+- `belongs-to`: Membership/ownership
+- `depends-on`: Dependency relationship
+- `related-to`: Generic relationship
+
+Additional relation rules:
+- Both source and target entities must exist
+- Self-referential relations not allowed
+- No circular dependencies allowed
+- Must use predefined relation types
 
 ## Usage
 
@@ -43,9 +86,18 @@ else:
 
 ### Create Entities
 ```python
+# Valid entity creation
 entities = [
-    Entity(name="example1", type="person"),
-    Entity(name="example2", type="location")
+    Entity(
+        name="python-project",  # Lowercase with hyphens
+        entityType="project",   # Must be a valid type
+        observations=["Started development on 2024-01-29"]
+    ),
+    Entity(
+        name="john-doe",
+        entityType="person",
+        observations=["Software engineer", "Joined team in 2024"]
+    )
 ]
 result = await session.call_tool("create_entities", {
     "entities": entities
@@ -59,23 +111,27 @@ if not result.success:
 
 ### Add Observation
 ```python
+# Valid observation
 result = await session.call_tool("add_observation", {
-    "entity": "example",
-    "observation": "This is a new observation"
+    "entity": "python-project",
+    "observation": "Completed initial prototype"  # Must be unique for entity
 })
 if not result.success:
     if result.error_type == "NOT_FOUND":
         print(f"Entity not found: {result.error}")
+    elif result.error_type == "VALIDATION_ERROR":
+        print(f"Invalid observation: {result.error}")
     else:
         print(f"Error adding observation: {result.error}")
 ```
 
 ### Create Relation
 ```python
+# Valid relation
 result = await session.call_tool("create_relation", {
-    "from_entity": "person1",
-    "to_entity": "location1",
-    "relation_type": "visited"
+    "from_entity": "john-doe",
+    "to_entity": "python-project",
+    "relation_type": "created"  # Must be a valid type
 })
 if not result.success:
     if result.error_type == "NOT_FOUND":
@@ -105,14 +161,16 @@ The search functionality supports:
 - Temporal queries (e.g., "most recent", "last", "latest")
 - Activity queries (e.g., "workout", "exercise")
 - General entity searches
-
-When using temporal queries with activity types (e.g., "most recent workout"),
-the search will automatically return the latest matching activity.
+- Fuzzy matching with 80% similarity threshold
+- Weighted search across:
+  - Entity names (weight: 1.0)
+  - Entity types (weight: 0.8)
+  - Observations (weight: 0.6)
 
 ### Delete Entities
 ```python
 result = await session.call_tool("delete_entities", {
-    "names": ["example1", "example2"]
+    "names": ["python-project", "john-doe"]
 })
 if not result.success:
     if result.error_type == "NOT_FOUND":
@@ -124,8 +182,8 @@ if not result.success:
 ### Delete Relation
 ```python
 result = await session.call_tool("delete_relation", {
-    "from_entity": "person1",
-    "to_entity": "location1"
+    "from_entity": "john-doe",
+    "to_entity": "python-project"
 })
 if not result.success:
     if result.error_type == "NOT_FOUND":
@@ -179,3 +237,18 @@ class OperationResponse(BaseModel):
     success: bool
     error: Optional[str] = None
     error_type: Optional[str] = None
+```
+
+## Development
+
+### Running Tests
+
+```bash
+pytest tests/
+```
+
+### Adding New Features
+
+1. Update validation rules in `validation.py`
+2. Add tests in `tests/test_validation.py`
+3. Implement changes in `knowledge_graph_manager.py`
