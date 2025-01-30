@@ -12,7 +12,8 @@ dependencies = [
     "loguru>=0.7.3",
     "mcp[cli]>=1.2.0",
     "memory-mcp-server",
-    "thefuzz[speedup]>=0.20.0",  # Includes python-Levenshtein for performance
+    "ruff>=0.9.4",
+    "thefuzz[speedup]>=0.20.0", # Includes python-Levenshtein for performance
 ]
 
 [project.optional-dependencies]
