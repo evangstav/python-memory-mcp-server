@@ -52,7 +52,7 @@ def test_validate_observations():
     # Invalid observations
     with pytest.raises(EntityValidationError, match="Empty observation"):
         KnowledgeGraphValidator.validate_observations([""])
-    with pytest.raises(EntityValidationError, match="maximum length"):
+    with pytest.raises(EntityValidationError, match="exceeds length of 500 chars"):
         KnowledgeGraphValidator.validate_observations(["a" * 501])  # Too long
     with pytest.raises(EntityValidationError, match="Duplicate observation"):
         KnowledgeGraphValidator.validate_observations(["same", "same"])
