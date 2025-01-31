@@ -96,10 +96,10 @@ class KnowledgeGraphValidator:
         seen = set()
         for obs in observations:
             if not obs:
-                raise EntityValidationError("Empty observation not allowed")
+                raise EntityValidationError("Empty observation")
             if len(obs) > cls.MAX_OBSERVATION_LENGTH:
                 raise EntityValidationError(
-                    f"Observation too long (max {cls.MAX_OBSERVATION_LENGTH} chars)"
+                    f"Observation exceeds length of {cls.MAX_OBSERVATION_LENGTH} chars"
                 )
             if obs in seen:
                 raise EntityValidationError(f"Duplicate observation: {obs}")
