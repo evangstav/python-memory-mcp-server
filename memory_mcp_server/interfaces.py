@@ -1,75 +1,63 @@
-"""Interface definitions for the memory MCP server."""
+"""Interface definitions for Memory MCP Server."""
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
-
-
-@dataclass
-class SearchOptions:
-    """Options for configuring knowledge graph search behavior."""
-
-    fuzzy: bool = False
-    threshold: int = 80  # Similarity threshold (0-100)
-    weights: Dict[str, float] = field(
-        default_factory=lambda: {"name": 1.0, "type": 0.8, "observations": 0.6}
-    )
+from dataclasses import dataclass
+from enum import Enum
+from typing import List, Optional
 
 
-@dataclass(frozen=True)  # Make it hashable by adding frozen=True
+@dataclass(frozen=True)
 class Entity:
-    """Entity class representing a node in the knowledge graph."""
+    """Entity in the knowledge graph."""
 
     name: str
     entityType: str
-    observations: Tuple[str, ...]  # Change list to tuple to make it hashable
+    observations: List[str]
 
-    def __init__(self, name: str, entityType: str, observations: List[str]) -> None:
-        """Initialize an Entity.
+    def __hash__(self) -> int:
+        """Make Entity hashable based on name."""
+        return hash(self.name)
 
-        Args:
-            name: The name of the entity
-            entityType: The type of the entity
-            observations: List of observations about the entity
-        """
-        # We need to use object.__setattr__ because the class is frozen
-        object.__setattr__(self, "name", name)
-        object.__setattr__(self, "entityType", entityType)
-        # Convert list to tuple
-        object.__setattr__(self, "observations", tuple(observations))
+    def __eq__(self, other: object) -> bool:
+        """Compare Entity based on name."""
+        if not isinstance(other, Entity):
+            return NotImplemented
+        return self.name == other.name
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the entity to a dictionary representation."""
+    def to_dict(self) -> dict:
+        """Convert to dictionary representation."""
         return {
             "name": self.name,
-            "type": self.entityType,
-            "observations": list(self.observations),
+            "entityType": self.entityType,
+            "observations": list(
+                self.observations
+            ),  # Convert to list in case it's a tuple
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class Relation:
-    """Relation class representing an edge in the knowledge graph."""
+    """Relation between entities in the knowledge graph."""
 
-    from_: str  # Using from_ in code but will serialize as 'from'
+    from_: str
     to: str
     relationType: str
 
-    def __init__(self, **kwargs: str) -> None:
-        """Initialize a Relation.
+    def __hash__(self) -> int:
+        """Make Relation hashable based on all fields."""
+        return hash((self.from_, self.to, self.relationType))
 
-        Args:
-            **kwargs: Keyword arguments for 'from'/'from_', 'to', 'relationType'
-        """
-        # Handle both 'from' and 'from_' in input
-        if "from" in kwargs:
-            self.from_ = kwargs["from"]
-        elif "from_" in kwargs:
-            self.from_ = kwargs["from_"]
-        self.to = kwargs["to"]
-        self.relationType = kwargs["relationType"]
+    def __eq__(self, other: object) -> bool:
+        """Compare Relation based on all fields."""
+        if not isinstance(other, Relation):
+            return NotImplemented
+        return (
+            self.from_ == other.from_
+            and self.to == other.to
+            and self.relationType == other.relationType
+        )
 
-    def to_dict(self) -> Dict[str, str]:
-        """Convert the relation to a dictionary representation."""
+    def to_dict(self) -> dict:
+        """Convert to dictionary representation."""
         return {
             "from": self.from_,
             "to": self.to,
@@ -79,14 +67,51 @@ class Relation:
 
 @dataclass
 class KnowledgeGraph:
-    """KnowledgeGraph class representing the entire graph structure."""
+    """Knowledge graph containing entities and relations."""
 
     entities: List[Entity]
     relations: List[Relation]
 
-    def to_dict(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Convert the knowledge graph to a dictionary representation."""
+    def to_dict(self) -> dict:
+        """Convert to dictionary representation."""
         return {
-            "entities": [entity.to_dict() for entity in self.entities],
-            "relations": [relation.to_dict() for relation in self.relations],
+            "entities": [e.to_dict() for e in self.entities],
+            "relations": [r.to_dict() for r in self.relations],
         }
+
+
+@dataclass
+class SearchOptions:
+    """Options for configuring search behavior."""
+
+    fuzzy: bool = False
+    threshold: float = 80.0
+    weights: Optional[dict[str, float]] = None
+
+
+class BatchOperationType(Enum):
+    """Types of batch operations."""
+
+    CREATE_ENTITIES = "create_entities"
+    DELETE_ENTITIES = "delete_entities"
+    CREATE_RELATIONS = "create_relations"
+    DELETE_RELATIONS = "delete_relations"
+    ADD_OBSERVATIONS = "add_observations"
+
+
+@dataclass
+class BatchOperation:
+    """Represents a single operation in a batch."""
+
+    operation_type: BatchOperationType
+    data: dict  # Operation-specific data
+
+
+@dataclass
+class BatchResult:
+    """Result of a batch operation execution."""
+
+    success: bool
+    operations_completed: int
+    failed_operations: List[tuple[BatchOperation, str]]  # Operation and error message
+    error_message: Optional[str] = None

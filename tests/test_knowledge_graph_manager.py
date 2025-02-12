@@ -132,8 +132,8 @@ async def test_error_handling(
             [Entity(name="Invalid Name", entityType="person", observations=[])]
         )
 
-    # Test relation with non-existent entity
-    with pytest.raises(ValidationError, match="Source entity not found"):
+    # Test relation with non-existent entities
+    with pytest.raises(ValidationError, match="Entities not found"):
         await knowledge_graph_manager.create_relations(
             [
                 Relation(

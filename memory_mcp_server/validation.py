@@ -232,3 +232,135 @@ class KnowledgeGraphValidator:
 
         # Check for cycles
         cls.validate_no_cycles(graph.relations)
+
+    @classmethod
+    def validate_batch_entities(
+        cls, entities: List[Entity], existing_names: Set[str]
+    ) -> None:
+        """Validate a batch of entities efficiently.
+
+        Args:
+            entities: List of entities to validate
+            existing_names: Set of existing entity names
+
+        Raises:
+            EntityValidationError: If validation fails
+        """
+        if not entities:
+            raise EntityValidationError("Entity list cannot be empty")
+
+        # Check for duplicates within the batch
+        new_names = set()
+        for entity in entities:
+            if entity.name in new_names:
+                raise EntityValidationError(
+                    f"Duplicate entity name in batch: {entity.name}"
+                )
+            new_names.add(entity.name)
+
+        # Check for conflicts with existing entities
+        conflicts = new_names.intersection(existing_names)
+        if conflicts:
+            raise EntityValidationError(
+                f"Entities already exist: {', '.join(conflicts)}"
+            )
+
+        # Validate all entities in one pass
+        for entity in entities:
+            cls.validate_entity(entity)
+
+    @classmethod
+    def validate_batch_relations(
+        cls,
+        relations: List[Relation],
+        existing_relations: List[Relation],
+        entity_names: Set[str],
+    ) -> None:
+        """Validate a batch of relations efficiently.
+
+        Args:
+            relations: List of relations to validate
+            existing_relations: List of existing relations
+            entity_names: Set of valid entity names
+
+        Raises:
+            RelationValidationError: If validation fails
+        """
+        if not relations:
+            raise RelationValidationError("Relations list cannot be empty")
+
+        # Track relation keys to prevent duplicates
+        seen_relations: Set[tuple[str, str, str]] = set()
+
+        # Validate all relations in one pass
+        missing_entities = set()
+        for relation in relations:
+            # Basic validation
+            cls.validate_relation(relation)
+
+            # Check for duplicate relations
+            key = (relation.from_, relation.to, relation.relationType)
+            if key in seen_relations:
+                raise RelationValidationError(
+                    f"Duplicate relation: {relation.from_} -> {relation.to}"
+                )
+            seen_relations.add(key)
+
+            # Collect missing entities
+            if relation.from_ not in entity_names:
+                missing_entities.add(relation.from_)
+            if relation.to not in entity_names:
+                missing_entities.add(relation.to)
+
+        # Report all missing entities at once
+        if missing_entities:
+            raise RelationValidationError(
+                f"Entities not found: {', '.join(missing_entities)}"
+            )
+
+        # Check for cycles including existing relations
+        cls.validate_no_cycles(relations, existing_relations)
+
+    @classmethod
+    def validate_batch_observations(
+        cls,
+        observations_map: dict[str, List[str]],
+        existing_entities: dict[str, Entity],
+    ) -> None:
+        """Validate a batch of observations efficiently.
+
+        Args:
+            observations_map: Dictionary mapping entity names to lists of observations
+            existing_entities: Dictionary of existing entities
+
+        Raises:
+            EntityValidationError: If validation fails
+        """
+        if not observations_map:
+            raise EntityValidationError("Observations map cannot be empty")
+
+        # Check for missing entities first
+        missing_entities = [
+            name for name in observations_map if name not in existing_entities
+        ]
+        if missing_entities:
+            raise EntityValidationError(
+                f"Entities not found: {', '.join(missing_entities)}"
+            )
+
+        # Validate all observations in one pass
+        for entity_name, observations in observations_map.items():
+            if not observations:
+                continue
+
+            # Validate observation format
+            cls.validate_observations(observations)
+
+            # Check for duplicates against existing observations
+            entity = existing_entities[entity_name]
+            existing_observations = set(entity.observations)
+            duplicates = [obs for obs in observations if obs in existing_observations]
+            if duplicates:
+                raise EntityValidationError(
+                    f"Duplicate observations for {entity_name}: {', '.join(duplicates)}"
+                )

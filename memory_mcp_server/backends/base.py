@@ -3,7 +3,14 @@
 from abc import ABC, abstractmethod
 from typing import List
 
-from ..interfaces import Entity, KnowledgeGraph, Relation, SearchOptions
+from ..interfaces import (
+    BatchOperation,
+    BatchResult,
+    Entity,
+    KnowledgeGraph,
+    Relation,
+    SearchOptions,
+)
 
 
 class Backend(ABC):
@@ -109,4 +116,52 @@ class Backend(ABC):
             entity_name: Name of the entity to add observations to
             observations: List of observations to add
         """
+        pass
+
+    @abstractmethod
+    async def add_batch_observations(
+        self, observations_map: dict[str, List[str]]
+    ) -> None:
+        """Add observations to multiple entities in a single operation.
+
+        Args:
+            observations_map: Dictionary mapping entity names to lists of observations
+
+        Raises:
+            ValidationError: If any observations are invalid
+            EntityNotFoundError: If any entity is not found
+        """
+        pass
+
+    @abstractmethod
+    async def execute_batch(self, operations: List[BatchOperation]) -> BatchResult:
+        """Execute multiple operations in a single atomic batch.
+
+        Args:
+            operations: List of operations to execute
+
+        Returns:
+            BatchResult containing success/failure information
+
+        Raises:
+            ValidationError: If validation fails for any operation
+        """
+        pass
+
+    @abstractmethod
+    async def begin_transaction(self) -> None:
+        """Begin a transaction for batch operations.
+
+        This creates a savepoint that can be rolled back to if needed.
+        """
+        pass
+
+    @abstractmethod
+    async def rollback_transaction(self) -> None:
+        """Rollback to the last transaction savepoint."""
+        pass
+
+    @abstractmethod
+    async def commit_transaction(self) -> None:
+        """Commit the current transaction."""
         pass

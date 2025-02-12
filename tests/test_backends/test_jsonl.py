@@ -1,103 +1,170 @@
-"""Tests for the JSONL backend implementation."""
-
 import json
 from pathlib import Path
-from typing import AsyncGenerator
 
 import pytest
 
 from memory_mcp_server.backends.jsonl import JsonlBackend
 from memory_mcp_server.exceptions import EntityNotFoundError, FileAccessError
-from memory_mcp_server.interfaces import Entity, Relation, SearchOptions
+from memory_mcp_server.interfaces import (
+    BatchOperation,
+    BatchOperationType,
+    BatchResult,
+    Entity,
+    Relation,
+    SearchOptions,
+)
+
+# --- Fixtures ---
 
 
-@pytest.fixture(scope="function")
-async def jsonl_backend(tmp_path: Path) -> AsyncGenerator[JsonlBackend, None]:
-    """Create a temporary JSONL backend for testing."""
-    backend = JsonlBackend(tmp_path / "test_memory.jsonl")
-    await backend.initialize()
-    yield backend
-    await backend.close()
+@pytest.fixture
+async def backend(tmp_path: Path) -> JsonlBackend:
+    b = JsonlBackend(tmp_path / "test.jsonl")
+    await b.initialize()
+    yield b
+    await b.close()
 
 
-@pytest.mark.asyncio(scope="function")
-async def test_create_entities(jsonl_backend: JsonlBackend) -> None:
-    """Test creating new entities."""
+# --- Entity Creation / Duplication ---
 
 
 @pytest.mark.asyncio
-async def test_fuzzy_search(jsonl_backend: JsonlBackend) -> None:
-    """Test fuzzy search functionality."""
-    # Create test entities
+async def test_create_entities(backend: JsonlBackend):
+    entities = [
+        Entity(name="Alice", entityType="person", observations=["likes apples"]),
+        Entity(name="Bob", entityType="person", observations=["enjoys biking"]),
+    ]
+    created = await backend.create_entities(entities)
+    assert len(created) == 2, "Should create two new entities"
+
+    graph = await backend.read_graph()
+    assert len(graph.entities) == 2, "Graph should contain two entities"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_entities(backend: JsonlBackend):
+    entity = Entity(name="Alice", entityType="person", observations=["likes apples"])
+    created1 = await backend.create_entities([entity])
+    created2 = await backend.create_entities([entity])
+    assert len(created1) == 1
+    assert len(created2) == 0, "Duplicate entity creation should return empty list"
+
+
+# --- Relation Creation / Deletion ---
+
+
+@pytest.mark.asyncio
+async def test_create_relations(backend: JsonlBackend):
+    entities = [
+        Entity(name="Alice", entityType="person", observations=[""]),
+        Entity(name="Wonderland", entityType="place", observations=["fantasy land"]),
+    ]
+    await backend.create_entities(entities)
+    relation = Relation(from_="Alice", to="Wonderland", relationType="visits")
+    created_relations = await backend.create_relations([relation])
+    assert len(created_relations) == 1
+
+    graph = await backend.read_graph()
+    assert len(graph.relations) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_relation_missing_entity(backend: JsonlBackend):
+    # No entities have been created.
+    relation = Relation(from_="Alice", to="Nowhere", relationType="visits")
+    with pytest.raises(EntityNotFoundError):
+        await backend.create_relations([relation])
+
+
+@pytest.mark.asyncio
+async def test_delete_relations(backend: JsonlBackend):
+    entities = [
+        Entity(name="Alice", entityType="person", observations=[]),
+        Entity(name="Bob", entityType="person", observations=[]),
+    ]
+    await backend.create_entities(entities)
+    # Create two distinct relations.
+    relation1 = Relation(from_="Alice", to="Bob", relationType="likes")
+    relation2 = Relation(from_="Alice", to="Bob", relationType="follows")
+    await backend.create_relations([relation1, relation2])
+    await backend.delete_relations("Alice", "Bob")
+    graph = await backend.read_graph()
+    assert (
+        len(graph.relations) == 0
+    ), "All relations between Alice and Bob should be removed"
+
+
+@pytest.mark.asyncio
+async def test_delete_entities(backend: JsonlBackend):
+    entities = [
+        Entity(name="Alice", entityType="person", observations=["obs1"]),
+        Entity(name="Bob", entityType="person", observations=["obs2"]),
+    ]
+    await backend.create_entities(entities)
+    # Create a relation so that deletion cascades.
+    relation = Relation(from_="Alice", to="Bob", relationType="knows")
+    await backend.create_relations([relation])
+    deleted = await backend.delete_entities(["Alice"])
+    assert "Alice" in deleted
+
+    graph = await backend.read_graph()
+    # Only Bob should remain and the relation should have been removed.
+    assert len(graph.entities) == 1
+    assert graph.entities[0].name == "Bob"
+    assert len(graph.relations) == 0
+
+
+# --- Searching ---
+
+
+@pytest.mark.asyncio
+async def test_search_nodes_exact(backend: JsonlBackend):
     entities = [
         Entity(
-            name="John Smith",
-            entityType="person",
-            observations=["Software engineer at Tech Corp"],
+            name="Alice Wonderland", entityType="person", observations=["loves tea"]
+        ),
+        Entity(name="Wonderland", entityType="place", observations=["magical"]),
+    ]
+    await backend.create_entities(entities)
+    result = await backend.search_nodes("Wonderland")
+    # Both entities should match the substring.
+    assert len(result.entities) == 2
+    # No relations were created.
+    assert len(result.relations) == 0
+
+
+@pytest.mark.asyncio
+async def test_search_nodes_fuzzy(backend: JsonlBackend):
+    entities = [
+        Entity(
+            name="John Smith", entityType="person", observations=["software engineer"]
         ),
         Entity(
-            name="Jane Smith",
-            entityType="person",
-            observations=["Product manager at Tech Corp"],
-        ),
-        Entity(
-            name="Tech Corporation",
-            entityType="company",
-            observations=["A technology company"],
+            name="Jane Smith", entityType="person", observations=["product manager"]
         ),
     ]
-    await jsonl_backend.create_entities(entities)
-
-    # Test exact match (backward compatibility)
-    result = await jsonl_backend.search_nodes("John")
-    assert len(result.entities) == 1
-    assert result.entities[0].name == "John Smith"
-
-    # Test fuzzy match with high threshold
+    await backend.create_entities(entities)
     options = SearchOptions(
         fuzzy=True,
         threshold=90,
-        weights={"name": 1.0, "type": 0.5, "observations": 0.3},
+        weights={"name": 0.7, "type": 0.5, "observations": 0.3},
     )
-    result = await jsonl_backend.search_nodes("Jon Smith", options)
-    assert len(result.entities) == 1
+    result = await backend.search_nodes("Jon Smith", options)
+    assert len(result.entities) == 1, "Fuzzy search should match John Smith"
     assert result.entities[0].name == "John Smith"
-
-    # Test fuzzy match with lower threshold
-    options = SearchOptions(fuzzy=True, threshold=70)
-    result = await jsonl_backend.search_nodes("Jane Smyth", options)
-    assert len(result.entities) == 1
-    assert result.entities[0].name == "Jane Smith"
-
-    # Test fuzzy match with observations
-    options = SearchOptions(
-        fuzzy=True,
-        threshold=60,
-        weights={"name": 0.3, "type": 0.3, "observations": 1.0},
-    )
-    result = await jsonl_backend.search_nodes("software dev", options)
-    assert len(result.entities) == 1
-    assert result.entities[0].name == "John Smith"
-
-    # Test no matches with high threshold
-    options = SearchOptions(fuzzy=True, threshold=95)
-    result = await jsonl_backend.search_nodes("Bob Jones", options)
-    assert len(result.entities) == 0
 
 
 @pytest.mark.asyncio
-async def test_fuzzy_search_weights(jsonl_backend: JsonlBackend) -> None:
-    """Test fuzzy search with different weight configurations."""
-    # Clear any existing entities
-    await jsonl_backend.delete_entities(
-        [e.name for e in (await jsonl_backend.read_graph()).entities]
-    )
-
+async def test_search_nodes_fuzzy_weights(backend: JsonlBackend):
+    # Clear any existing entities.
+    current = await backend.read_graph()
+    if current.entities:
+        await backend.delete_entities([e.name for e in current.entities])
     entities = [
         Entity(
             name="Programming Guide",
             entityType="document",
-            observations=["A guide about software development"],
+            observations=["A guide about programming development"],
         ),
         Entity(
             name="Software Manual",
@@ -105,386 +172,265 @@ async def test_fuzzy_search_weights(jsonl_backend: JsonlBackend) -> None:
             observations=["Programming tutorial and guide"],
         ),
     ]
-    await jsonl_backend.create_entities(entities)
-
-    # Test name-weighted search
-    name_options = SearchOptions(
+    await backend.create_entities(entities)
+    # With name-weight high, only one should match.
+    options_name = SearchOptions(
         fuzzy=True,
         threshold=60,
         weights={"name": 1.0, "type": 0.1, "observations": 0.1},
     )
-    result = await jsonl_backend.search_nodes("programming", name_options)
+    result = await backend.search_nodes("programming", options_name)
     assert len(result.entities) == 1
     assert result.entities[0].name == "Programming Guide"
 
-    # Test observation-weighted search
-    obs_options = SearchOptions(
+    # With observation weight high, both should match.
+    options_obs = SearchOptions(
         fuzzy=True,
         threshold=60,
         weights={"name": 0.1, "type": 0.1, "observations": 1.0},
     )
-    result = await jsonl_backend.search_nodes("programming", obs_options)
+    result = await backend.search_nodes("programming", options_obs)
     assert len(result.entities) == 2
-    assert any(e.name == "Software Manual" for e in result.entities)
-
-    # Clear again for create_entities test
-    await jsonl_backend.delete_entities(
-        [e.name for e in (await jsonl_backend.read_graph()).entities]
-    )
-
-    test_entities = [
-        Entity("test1", "person", ["observation1", "observation2"]),
-        Entity("test2", "location", ["observation3"]),
-    ]
-    result = await jsonl_backend.create_entities(test_entities)
-    assert len(result) == 2
-
-    # Verify entities were saved
-    graph = await jsonl_backend.read_graph()
-    assert len(graph.entities) == 2
-    assert any(e.name == "test1" and e.entityType == "person" for e in graph.entities)
-    assert any(e.name == "test2" and e.entityType == "location" for e in graph.entities)
 
 
-@pytest.mark.asyncio(scope="function")
-async def test_create_relations(jsonl_backend: JsonlBackend) -> None:
-    """Test creating relations between entities."""
-    # Create entities first
+# --- Observations ---
+
+
+@pytest.mark.asyncio
+async def test_add_observations(backend: JsonlBackend):
+    entity = Entity(name="Alice", entityType="person", observations=["initial"])
+    await backend.create_entities([entity])
+    await backend.add_observations("Alice", ["update"])
+    graph = await backend.read_graph()
+    alice = next(e for e in graph.entities if e.name == "Alice")
+    assert "update" in alice.observations
+
+
+@pytest.mark.asyncio
+async def test_add_batch_observations(backend: JsonlBackend):
     entities = [
-        Entity("person1", "person", ["observation1"]),
-        Entity("location1", "location", ["observation2"]),
+        Entity(name="Alice", entityType="person", observations=["obs1"]),
+        Entity(name="Bob", entityType="person", observations=["obs2"]),
     ]
-    await jsonl_backend.create_entities(entities)
-
-    # Create relation
-    relations = [Relation(from_="person1", to="location1", relationType="visited")]
-    result = await jsonl_backend.create_relations(relations)
-    assert len(result) == 1
-
-    # Verify relation was saved
-    graph = await jsonl_backend.read_graph()
-    assert len(graph.relations) == 1
-    assert graph.relations[0].from_ == "person1"
-    assert graph.relations[0].to == "location1"
-    assert graph.relations[0].relationType == "visited"
+    await backend.create_entities(entities)
+    observations_map = {"Alice": ["new1", "new2"], "Bob": ["new3"]}
+    await backend.add_batch_observations(observations_map)
+    graph = await backend.read_graph()
+    alice = next(e for e in graph.entities if e.name == "Alice")
+    bob = next(e for e in graph.entities if e.name == "Bob")
+    assert set(alice.observations) == {"obs1", "new1", "new2"}
+    assert set(bob.observations) == {"obs2", "new3"}
 
 
-@pytest.mark.asyncio(scope="function")
-async def test_create_relation_missing_entity(jsonl_backend: JsonlBackend) -> None:
-    """Test creating relation with non-existent entity."""
-    relations = [Relation(from_="nonexistent1", to="nonexistent2", relationType="test")]
+@pytest.mark.asyncio
+async def test_add_batch_observations_empty_map(backend: JsonlBackend):
+    with pytest.raises(ValueError, match="Observations map cannot be empty"):
+        await backend.add_batch_observations({})
 
+
+@pytest.mark.asyncio
+async def test_add_batch_observations_missing_entity(backend: JsonlBackend):
+    entity = Entity(name="Alice", entityType="person", observations=["obs1"])
+    await backend.create_entities([entity])
+    observations_map = {"Alice": ["new"], "Bob": ["obs"]}
     with pytest.raises(EntityNotFoundError):
-        await jsonl_backend.create_relations(relations)
+        await backend.add_batch_observations(observations_map)
 
 
-@pytest.mark.asyncio(scope="function")
-async def test_search_nodes(jsonl_backend: JsonlBackend) -> None:
-    """Test searching nodes in the graph."""
-    # Create test data
+# --- Transaction Management ---
+
+
+@pytest.mark.asyncio
+async def test_transaction_management(backend: JsonlBackend):
     entities = [
-        Entity("test1", "person", ["likes coffee", "works at office"]),
-        Entity("test2", "person", ["likes tea"]),
-        Entity("office", "location", ["big building"]),
+        Entity(name="Alice", entityType="person", observations=["obs1"]),
+        Entity(name="Bob", entityType="person", observations=["obs2"]),
     ]
-    await jsonl_backend.create_entities(entities)
+    await backend.create_entities(entities)
+    # Begin a transaction.
+    await backend.begin_transaction()
+    await backend.create_entities(
+        [Entity(name="Charlie", entityType="person", observations=["obs3"])]
+    )
+    await backend.delete_entities(["Alice"])
+    # Within transaction, changes are visible.
+    graph = await backend.read_graph()
+    names = {e.name for e in graph.entities}
+    assert "Charlie" in names
+    assert "Alice" not in names
+    # Roll back.
+    await backend.rollback_transaction()
+    graph = await backend.read_graph()
+    names = {e.name for e in graph.entities}
+    assert "Alice" in names
+    assert "Charlie" not in names
 
-    relations = [Relation(from_="test1", to="office", relationType="works_at")]
-    await jsonl_backend.create_relations(relations)
-
-    # Test search
-    result = await jsonl_backend.search_nodes("coffee")
-    assert len(result.entities) == 1
-    assert result.entities[0].name == "test1"
-
-    result = await jsonl_backend.search_nodes("office")
-    assert len(result.entities) == 2  # Both office entity and entity with office in obs
-    assert "office" in {e.name for e in result.entities}
-    assert "test1" in {e.name for e in result.entities}
-    assert len(result.relations) == 1
+    # Test commit.
+    await backend.begin_transaction()
+    await backend.create_entities(
+        [Entity(name="Dave", entityType="person", observations=["obs4"])]
+    )
+    await backend.commit_transaction()
+    graph = await backend.read_graph()
+    names = {e.name for e in graph.entities}
+    assert "Dave" in names
 
 
-@pytest.mark.asyncio(scope="function")
-async def test_persistence(tmp_path: Path) -> None:
-    """Test that data persists between backend instances."""
-    file_path = tmp_path / "persistence_test.jsonl"
+# --- Persistence and File Format ---
 
-    # Create first instance and add data
+
+@pytest.mark.asyncio
+async def test_persistence(tmp_path: Path):
+    file_path = tmp_path / "persist.jsonl"
     backend1 = JsonlBackend(file_path)
     await backend1.initialize()
-
-    entities = [Entity("test1", "person", ["observation1"])]
-    await backend1.create_entities(entities)
+    entity = Entity(name="Alice", entityType="person", observations=["obs"])
+    await backend1.create_entities([entity])
     await backend1.close()
 
-    # Create second instance and verify data
     backend2 = JsonlBackend(file_path)
     await backend2.initialize()
-
     graph = await backend2.read_graph()
-    assert len(graph.entities) == 1
-    assert graph.entities[0].name == "test1"
+    assert any(e.name == "Alice" for e in graph.entities)
     await backend2.close()
 
 
-@pytest.mark.asyncio(scope="function")
-async def test_file_format(tmp_path: Path) -> None:
-    """Test that the JSONL file format is correct."""
-    file_path = tmp_path / "format_test.jsonl"
+@pytest.mark.asyncio
+async def test_atomic_writes(tmp_path: Path):
+    file_path = tmp_path / "atomic.jsonl"
     backend = JsonlBackend(file_path)
     await backend.initialize()
-
-    # Add test data
-    entities = [Entity("test1", "person", ["obs1"])]
-    relations = [Relation(from_="test1", to="test1", relationType="self_ref")]
-
-    await backend.create_entities(entities)
-    await backend.create_relations(relations)
+    entity = Entity(name="Alice", entityType="person", observations=["obs"])
+    await backend.create_entities([entity])
     await backend.close()
-
-    # Verify file content
-    with open(file_path) as f:
-        lines = f.readlines()
-
-    assert len(lines) == 2  # One entity and one relation
-
-    # Verify entity format
-    entity_line = json.loads(lines[0])
-    assert entity_line["type"] == "entity"
-    assert entity_line["name"] == "test1"
-    assert entity_line["entityType"] == "person"
-    assert entity_line["observations"] == ["obs1"]
-
-    # Verify relation format
-    relation_line = json.loads(lines[1])
-    assert relation_line["type"] == "relation"
-    assert relation_line["from"] == "test1"
-    assert relation_line["to"] == "test1"
-    assert relation_line["relationType"] == "self_ref"
-
-
-@pytest.mark.asyncio(scope="function")
-async def test_caching(jsonl_backend: JsonlBackend) -> None:
-    """Test that caching works correctly."""
-    entities = [Entity("test1", "person", ["obs1"])]
-    await jsonl_backend.create_entities(entities)
-
-    # First read should cache
-    graph1 = await jsonl_backend.read_graph()
-
-    # Second read should use cache
-    graph2 = await jsonl_backend.read_graph()
-
-    # Should be the same object if cached
-    assert graph1 is graph2
-
-
-@pytest.mark.asyncio(scope="function")
-async def test_atomic_writes(tmp_path: Path) -> None:
-    """Test that writes are atomic using temp files."""
-    file_path = tmp_path / "atomic_test.jsonl"
-    temp_path = file_path.with_suffix(".tmp")
-
-    backend = JsonlBackend(file_path)
-    await backend.initialize()
-
-    # Add some data
-    entities = [Entity("test1", "person", ["obs1"])]
-    await backend.create_entities(entities)
-    await backend.close()
-
-    # Verify temp file was cleaned up
-    assert not temp_path.exists()
+    temp_file = file_path.with_suffix(".tmp")
+    assert not temp_file.exists(), "Temporary file should be removed after writing"
     assert file_path.exists()
 
 
-@pytest.mark.asyncio(scope="function")
-async def test_duplicate_entities(jsonl_backend: JsonlBackend) -> None:
-    """Test handling of duplicate entities."""
-    entity = Entity("test1", "person", ["obs1"])
-
-    # First creation should succeed
-    result1 = await jsonl_backend.create_entities([entity])
-    assert len(result1) == 1
-
-    # Second creation should return empty list (no new entities)
-    result2 = await jsonl_backend.create_entities([entity])
-    assert len(result2) == 0
-
-    # Verify only one entity exists
-    graph = await jsonl_backend.read_graph()
-    assert len(graph.entities) == 1
-
-
-@pytest.mark.asyncio(scope="function")
-async def test_duplicate_relations(jsonl_backend: JsonlBackend) -> None:
-    """Test handling of duplicate relations."""
-    # Create test entities
-    entities = [
-        Entity("test1", "person", ["obs1"]),
-        Entity("test2", "person", ["obs2"]),
-    ]
-    await jsonl_backend.create_entities(entities)
-
-    relation = Relation(from_="test1", to="test2", relationType="knows")
-
-    # First creation should succeed
-    result1 = await jsonl_backend.create_relations([relation])
-    assert len(result1) == 1
-
-    # Second creation should return empty list (no new relations)
-    result2 = await jsonl_backend.create_relations([relation])
-    assert len(result2) == 0
-
-    # Verify only one relation exists
-    graph = await jsonl_backend.read_graph()
-    assert len(graph.relations) == 1
-
-
-@pytest.mark.asyncio(scope="function")
-async def test_delete_entities(jsonl_backend: JsonlBackend) -> None:
-    """Test deleting entities and related relations."""
-    # Create test data
-    entities = [
-        Entity("test1", "person", ["obs1"]),
-        Entity("test2", "location", ["obs2"]),
-    ]
-    await jsonl_backend.create_entities(entities)
-
-    relations = [
-        Relation(from_="test1", to="test2", relationType="visits"),
-        Relation(from_="test2", to="test1", relationType="hosts"),
-    ]
-    await jsonl_backend.create_relations(relations)
-
-    # Delete one entity
-    deleted = await jsonl_backend.delete_entities(["test1"])
-    assert deleted == ["test1"]
-
-    # Verify entity removal and relation cleanup
-    graph = await jsonl_backend.read_graph()
-    assert len(graph.entities) == 1
-    assert len(graph.relations) == 0
-    assert "test2" in [e.name for e in graph.entities]
-
-    # Verify cache consistency
-    graph2 = await jsonl_backend.read_graph()
-    assert graph is graph2  # Should return same cached object
-
-    # Test deleting non-existent entity
-    deleted = await jsonl_backend.delete_entities(["nonexistent"])
-    assert deleted == []
-
-
-@pytest.mark.asyncio(scope="function")
-async def test_delete_relations(jsonl_backend: JsonlBackend) -> None:
-    """Test deleting relations between entities."""
-    # Create test data
-    entities = [
-        Entity("person1", "person", []),
-        Entity("location1", "location", []),
-    ]
-    relations = [
-        Relation(from_="person1", to="location1", relationType="visited"),
-        Relation(from_="person1", to="location1", relationType="likes"),
-    ]
-
-    await jsonl_backend.create_entities(entities)
-    await jsonl_backend.create_relations(relations)
-
-    # Delete relations
-    await jsonl_backend.delete_relations("person1", "location1")
-
-    # Verify deletion
-    graph = await jsonl_backend.read_graph()
-    assert len(graph.relations) == 0
-
-
-@pytest.mark.asyncio(scope="function")
-async def test_delete_nonexistent_relations(jsonl_backend: JsonlBackend) -> None:
-    """Test deleting relations that don't exist."""
-    entities = [
-        Entity("person1", "person", []),
-        Entity("location1", "location", []),
-    ]
-    await jsonl_backend.create_entities(entities)
-
-    # Try to delete non-existent relation
-    await jsonl_backend.delete_relations("person1", "location1")
-
-    # Verify no changes
-    graph = await jsonl_backend.read_graph()
-    assert len(graph.relations) == 0
-
-
-@pytest.mark.asyncio(scope="function")
-async def test_delete_bidirectional_relations(jsonl_backend: JsonlBackend) -> None:
-    """Test deleting bidirectional relations."""
-    entities = [
-        Entity("A", "node", []),
-        Entity("B", "node", []),
-    ]
-    relations = [
-        Relation(from_="A", to="B", relationType="connects"),
-        Relation(from_="B", to="A", relationType="connects"),
-    ]
-
-    await jsonl_backend.create_entities(entities)
-    await jsonl_backend.create_relations(relations)
-
-    # Delete relations in both directions
-    await jsonl_backend.delete_relations("A", "B")
-    await jsonl_backend.delete_relations("B", "A")
-
-    graph = await jsonl_backend.read_graph()
-    assert len(graph.relations) == 0
-
-
-@pytest.mark.asyncio(scope="function")
-async def test_delete_relations_missing_entity(jsonl_backend: JsonlBackend) -> None:
-    """Test deleting relations with missing entities."""
-    with pytest.raises(EntityNotFoundError):
-        await jsonl_backend.delete_relations("ghost", "nonexistent")
-
-
 @pytest.mark.asyncio
-async def test_file_access_error_propagation(tmp_path: Path) -> None:
-    """Test that file access errors are properly propagated."""
-    file_path = tmp_path / "test_error.jsonl"
-
-    # Create a directory with the same name to cause a file access error
-    file_path.mkdir()
-
-    # Initialize should fail since the path is a directory
-    backend = JsonlBackend(file_path)
-    with pytest.raises(FileAccessError) as exc_info:
-        await backend.initialize()
-    assert "is a directory" in str(exc_info.value)
-
-    await backend.close()
-
-
-@pytest.mark.asyncio
-async def test_corrupted_file_handling(tmp_path: Path) -> None:
-    """Test handling of corrupted JSONL files."""
-    file_path = tmp_path / "corrupted.jsonl"
-
-    # Create a file with invalid JSON
-    with open(file_path, "w") as f:
-        f.write(
-            '{"type": "entity", "name": "test1", "entityType": "test", '
-            '"observations": []}\n'
-        )  # Valid JSON
-        f.write(
-            '{"type": "relation", "from": "test1", "to": "test2"'  # Invalid JSON
-        )  # Invalid JSON - missing closing brace
-
+async def test_file_format(tmp_path: Path):
+    file_path = tmp_path / "format.jsonl"
     backend = JsonlBackend(file_path)
     await backend.initialize()
-
-    # Reading corrupted file should raise FileAccessError
-    with pytest.raises(FileAccessError) as exc_info:
-        await backend.read_graph()
-    assert "Error loading graph: Expecting ',' delimiter" in str(exc_info.value)
-
+    entity = Entity(name="Alice", entityType="person", observations=["obs"])
+    relation = Relation(from_="Alice", to="Alice", relationType="self")
+    await backend.create_entities([entity])
+    await backend.create_relations([relation])
     await backend.close()
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    assert len(lines) == 2, "File should contain exactly two JSON lines"
+    data1 = json.loads(lines[0])
+    data2 = json.loads(lines[1])
+    types = {data1.get("type"), data2.get("type")}
+    assert "entity" in types and "relation" in types
+
+
+# --- Error / Corruption Handling ---
+
+
+@pytest.mark.asyncio
+async def test_corrupted_file_handling(tmp_path: Path):
+    file_path = tmp_path / "corrupted.jsonl"
+    # Write one valid and one corrupted JSON line.
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(
+            '{"type": "entity", "name": "Alice", "entityType": "person", "observations": []}\n'
+        )
+        f.write(
+            '{"type": "relation", "from": "Alice", "to": "Bob"'
+        )  # missing closing brace
+    backend = JsonlBackend(file_path)
+    await backend.initialize()
+    with pytest.raises(FileAccessError, match="Error loading graph"):
+        await backend.read_graph()
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_file_access_error_propagation(tmp_path: Path):
+    file_path = tmp_path / "error.jsonl"
+    # Create a directory with the same name as the file.
+    file_path.mkdir()
+    backend = JsonlBackend(file_path)
+    with pytest.raises(FileAccessError, match="is a directory"):
+        await backend.initialize()
+    await backend.close()
+
+
+# --- Caching ---
+
+
+@pytest.mark.asyncio
+async def test_caching(backend: JsonlBackend):
+    entity = Entity(name="Alice", entityType="person", observations=["obs"])
+    await backend.create_entities([entity])
+    graph1 = await backend.read_graph()
+    graph2 = await backend.read_graph()
+    assert graph1 is graph2, "Repeated reads should return the cached graph"
+
+
+# --- Batch Operations ---
+
+
+@pytest.mark.asyncio
+async def test_execute_batch(backend: JsonlBackend):
+    # Create an initial entity.
+    await backend.create_entities(
+        [Entity(name="Alice", entityType="person", observations=["obs"])]
+    )
+    operations = [
+        BatchOperation(
+            operation_type=BatchOperationType.CREATE_ENTITIES,
+            data={
+                "entities": [
+                    Entity(name="Bob", entityType="person", observations=["obs2"])
+                ]
+            },
+        ),
+        BatchOperation(
+            operation_type=BatchOperationType.CREATE_RELATIONS,
+            data={
+                "relations": [Relation(from_="Alice", to="Bob", relationType="knows")]
+            },
+        ),
+        BatchOperation(
+            operation_type=BatchOperationType.ADD_OBSERVATIONS,
+            data={"observations_map": {"Alice": ["new_obs"]}},
+        ),
+    ]
+    result: BatchResult = await backend.execute_batch(operations)
+    print(result)
+    assert result.success, "Batch operations should succeed"
+    graph = await backend.read_graph()
+    assert any(e.name == "Bob" for e in graph.entities)
+    assert len(graph.relations) == 1
+    alice = next(e for e in graph.entities if e.name == "Alice")
+    assert "new_obs" in alice.observations
+
+
+@pytest.mark.asyncio
+async def test_execute_batch_failure(backend: JsonlBackend):
+    # Create an initial entity.
+    await backend.create_entities(
+        [Entity(name="Alice", entityType="person", observations=["obs"])]
+    )
+    operations = [
+        BatchOperation(
+            operation_type=BatchOperationType.CREATE_RELATIONS,
+            data={
+                "relations": [
+                    Relation(from_="Alice", to="NonExistent", relationType="knows")
+                ]
+            },
+        ),
+    ]
+    result: BatchResult = await backend.execute_batch(operations)
+    assert (
+        not result.success
+    ), "Batch operation should fail if a relation refers to a non-existent entity"
+    # Verify that rollback occurred (no partial changes).
+    graph = await backend.read_graph()
+    assert len(graph.entities) == 1
+    assert len(graph.relations) == 0

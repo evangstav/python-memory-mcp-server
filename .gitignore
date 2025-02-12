@@ -41,3 +41,5 @@ Thumbs.db
 *.sqlite3
 *.log
 .aider*
+cline_docs
+.clinerules

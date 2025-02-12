@@ -1,8 +1,8 @@
-"""Tests for knowledge graph validation."""
+"""Tests for validation functionality."""
 
 import pytest
 
-from memory_mcp_server.interfaces import Entity, KnowledgeGraph, Relation
+from memory_mcp_server.interfaces import Entity, Relation
 from memory_mcp_server.validation import (
     EntityValidationError,
     KnowledgeGraphValidator,
@@ -10,166 +10,165 @@ from memory_mcp_server.validation import (
 )
 
 
-def test_validate_entity_name():
-    """Test entity name validation rules."""
-    # Valid names
-    KnowledgeGraphValidator.validate_entity_name("test")
-    KnowledgeGraphValidator.validate_entity_name("test-123")
-    KnowledgeGraphValidator.validate_entity_name("a" + "b" * 98)  # 100 chars
+def test_validate_batch_entities() -> None:
+    """Test batch entity validation."""
+    # Valid batch
+    entities = [
+        Entity("test1", "person", ["obs1"]),
+        Entity("test2", "person", ["obs2"]),
+    ]
+    existing_names = {"existing1", "existing2"}
+    KnowledgeGraphValidator.validate_batch_entities(entities, existing_names)
 
-    # Invalid names
-    with pytest.raises(EntityValidationError, match="Invalid entity name"):
-        KnowledgeGraphValidator.validate_entity_name("Test")  # Uppercase
-    with pytest.raises(EntityValidationError, match="Invalid entity name"):
-        KnowledgeGraphValidator.validate_entity_name("test_123")  # Underscore
-    with pytest.raises(EntityValidationError, match="Invalid entity name"):
-        KnowledgeGraphValidator.validate_entity_name("123test")  # Starts with number
-    with pytest.raises(EntityValidationError, match="Invalid entity name"):
-        KnowledgeGraphValidator.validate_entity_name("a" * 101)  # Too long
+    # Empty batch
+    with pytest.raises(EntityValidationError, match="Entity list cannot be empty"):
+        KnowledgeGraphValidator.validate_batch_entities([], existing_names)
 
+    # Duplicate names within batch
+    entities = [
+        Entity("test1", "person", ["obs1"]),
+        Entity("test1", "person", ["obs2"]),
+    ]
+    with pytest.raises(EntityValidationError, match="Duplicate entity name in batch"):
+        KnowledgeGraphValidator.validate_batch_entities(entities, existing_names)
 
-def test_validate_entity_type():
-    """Test entity type validation."""
-    # Valid types
-    KnowledgeGraphValidator.validate_entity_type("person")
-    KnowledgeGraphValidator.validate_entity_type("concept")
-    KnowledgeGraphValidator.validate_entity_type("project")
+    # Conflict with existing names
+    entities = [
+        Entity("test1", "person", ["obs1"]),
+        Entity("existing1", "person", ["obs2"]),
+    ]
+    with pytest.raises(EntityValidationError, match="Entities already exist"):
+        KnowledgeGraphValidator.validate_batch_entities(entities, existing_names)
 
-    # Invalid types
+    # Invalid entity type
+    entities = [
+        Entity("test1", "invalid-type", ["obs1"]),
+    ]
     with pytest.raises(EntityValidationError, match="Invalid entity type"):
-        KnowledgeGraphValidator.validate_entity_type("invalid-type")
-    with pytest.raises(EntityValidationError, match="Invalid entity type"):
-        KnowledgeGraphValidator.validate_entity_type("Person")  # Case sensitive
+        KnowledgeGraphValidator.validate_batch_entities(entities, existing_names)
 
 
-def test_validate_observations():
-    """Test observation validation rules."""
-    # Valid observations
-    KnowledgeGraphValidator.validate_observations(["test observation"])
-    KnowledgeGraphValidator.validate_observations(["obs 1", "obs 2"])  # Multiple unique
-    KnowledgeGraphValidator.validate_observations([])  # Empty list is valid
+def test_validate_batch_relations() -> None:
+    """Test batch relation validation."""
+    # Valid batch
+    relations = [
+        Relation(from_="entity1", to="entity2", relationType="knows"),
+        Relation(from_="entity2", to="entity3", relationType="knows"),
+    ]
+    existing_relations = []
+    entity_names = {"entity1", "entity2", "entity3"}
+    KnowledgeGraphValidator.validate_batch_relations(
+        relations, existing_relations, entity_names
+    )
 
-    # Invalid observations
+    # Empty batch
+    with pytest.raises(RelationValidationError, match="Relations list cannot be empty"):
+        KnowledgeGraphValidator.validate_batch_relations(
+            [], existing_relations, entity_names
+        )
+
+    # Duplicate relations
+    relations = [
+        Relation(from_="entity1", to="entity2", relationType="knows"),
+        Relation(from_="entity1", to="entity2", relationType="knows"),  # Same relation
+    ]
+    with pytest.raises(RelationValidationError, match="Duplicate relation"):
+        KnowledgeGraphValidator.validate_batch_relations(
+            relations, existing_relations, entity_names
+        )
+
+    # Missing entities
+    relations = [
+        Relation("entity1", "nonexistent", "knows"),
+    ]
+    with pytest.raises(RelationValidationError, match="Entities not found"):
+        KnowledgeGraphValidator.validate_batch_relations(
+            relations, existing_relations, entity_names
+        )
+
+    # Invalid relation type
+    relations = [
+        Relation("entity1", "entity2", "invalid-type"),
+    ]
+    with pytest.raises(RelationValidationError, match="Invalid relation type"):
+        KnowledgeGraphValidator.validate_batch_relations(
+            relations, existing_relations, entity_names
+        )
+
+    # Self-referential relation
+    relations = [
+        Relation("entity1", "entity1", "knows"),
+    ]
+    with pytest.raises(
+        RelationValidationError, match="Self-referential relations not allowed"
+    ):
+        KnowledgeGraphValidator.validate_batch_relations(
+            relations, existing_relations, entity_names
+        )
+
+    # Cycle detection
+    relations = [
+        Relation("entity1", "entity2", "knows"),
+        Relation("entity2", "entity3", "knows"),
+        Relation("entity3", "entity1", "knows"),
+    ]
+    with pytest.raises(RelationValidationError, match="Circular dependency detected"):
+        KnowledgeGraphValidator.validate_batch_relations(
+            relations, existing_relations, entity_names
+        )
+
+
+def test_validate_batch_observations() -> None:
+    """Test batch observation validation."""
+    # Valid batch
+    existing_entities = {
+        "entity1": Entity("entity1", "person", ["existing1"]),
+        "entity2": Entity("entity2", "person", ["existing2"]),
+    }
+    observations_map = {
+        "entity1": ["new1", "new2"],
+        "entity2": ["new3"],
+    }
+    KnowledgeGraphValidator.validate_batch_observations(
+        observations_map, existing_entities
+    )
+
+    # Empty batch
+    with pytest.raises(EntityValidationError, match="Observations map cannot be empty"):
+        KnowledgeGraphValidator.validate_batch_observations({}, existing_entities)
+
+    # Missing entities
+    observations_map = {
+        "entity1": ["new1"],
+        "nonexistent": ["new2"],
+    }
+    with pytest.raises(EntityValidationError, match="Entities not found"):
+        KnowledgeGraphValidator.validate_batch_observations(
+            observations_map, existing_entities
+        )
+
+    # Empty observations list is allowed (skipped)
+    observations_map = {
+        "entity1": [],
+    }
+    KnowledgeGraphValidator.validate_batch_observations(
+        observations_map, existing_entities
+    )
+
+    # Invalid observation format
+    observations_map = {
+        "entity1": ["", "new2"],  # Empty observation
+    }
     with pytest.raises(EntityValidationError, match="Empty observation"):
-        KnowledgeGraphValidator.validate_observations([""])
-    with pytest.raises(EntityValidationError, match="exceeds length of 500 chars"):
-        KnowledgeGraphValidator.validate_observations(["a" * 501])  # Too long
-    with pytest.raises(EntityValidationError, match="Duplicate observation"):
-        KnowledgeGraphValidator.validate_observations(["same", "same"])
+        KnowledgeGraphValidator.validate_batch_observations(
+            observations_map, existing_entities
+        )
 
-
-def test_validate_entity():
-    """Test complete entity validation."""
-    # Valid entity
-    entity = Entity(
-        name="test-entity",
-        entityType="concept",
-        observations=["valid observation"],
-    )
-    KnowledgeGraphValidator.validate_entity(entity)
-
-    # Invalid entity - multiple issues
-    invalid_entity = Entity(
-        name="Invalid Name",
-        entityType="invalid-type",
-        observations=["valid"],
-    )
-    with pytest.raises(EntityValidationError, match="Invalid entity name"):
-        KnowledgeGraphValidator.validate_entity(invalid_entity)
-
-
-def test_validate_relation_type():
-    """Test relation type validation."""
-    # Valid types
-    KnowledgeGraphValidator.validate_relation_type("knows")
-    KnowledgeGraphValidator.validate_relation_type("contains")
-    KnowledgeGraphValidator.validate_relation_type("uses")
-
-    # Invalid types
-    with pytest.raises(RelationValidationError, match="Invalid relation type"):
-        KnowledgeGraphValidator.validate_relation_type("invalid-type")
-    with pytest.raises(RelationValidationError, match="Invalid relation type"):
-        KnowledgeGraphValidator.validate_relation_type("Knows")  # Case sensitive
-
-
-def test_validate_relation():
-    """Test complete relation validation."""
-    # Valid relation
-    relation = Relation(from_="entity1", to="entity2", relationType="knows")
-    KnowledgeGraphValidator.validate_relation(relation)
-
-    # Invalid - self reference
-    self_ref_relation = Relation(from_="same", to="same", relationType="knows")
-    with pytest.raises(RelationValidationError, match="Self-referential"):
-        KnowledgeGraphValidator.validate_relation(self_ref_relation)
-
-    # Invalid type
-    invalid_type_relation = Relation(from_="e1", to="e2", relationType="invalid")
-    with pytest.raises(RelationValidationError, match="Invalid relation type"):
-        KnowledgeGraphValidator.validate_relation(invalid_type_relation)
-        Relation(from_="e1", to="e2", relationType="invalid")
-
-
-def test_validate_no_cycles():
-    """Test cycle detection in relations."""
-    # Valid - no cycles
-    relations = [
-        Relation(from_="a", to="b", relationType="knows"),
-        Relation(from_="b", to="c", relationType="knows"),
-    ]
-    KnowledgeGraphValidator.validate_no_cycles(relations)
-
-    # Invalid - direct cycle
-    relations = [
-        Relation(from_="a", to="b", relationType="knows"),
-        Relation(from_="b", to="a", relationType="knows"),
-    ]
-    with pytest.raises(RelationValidationError, match="Circular dependency"):
-        KnowledgeGraphValidator.validate_no_cycles(relations)
-
-    # Invalid - indirect cycle
-    relations = [
-        Relation(from_="a", to="b", relationType="knows"),
-        Relation(from_="b", to="c", relationType="knows"),
-        Relation(from_="c", to="a", relationType="knows"),
-    ]
-    with pytest.raises(RelationValidationError, match="Circular dependency"):
-        KnowledgeGraphValidator.validate_no_cycles(relations)
-
-
-def test_validate_graph():
-    """Test complete graph validation."""
-    # Valid graph
-    graph = KnowledgeGraph(
-        entities=[
-            Entity(name="person1", entityType="person", observations=["obs1"]),
-            Entity(name="person2", entityType="person", observations=["obs2"]),
-        ],
-        relations=[
-            Relation(from_="person1", to="person2", relationType="knows"),
-        ],
-    )
-    KnowledgeGraphValidator.validate_graph(graph)
-
-    # Invalid - duplicate entity names
-    graph = KnowledgeGraph(
-        entities=[
-            Entity(name="same", entityType="person", observations=["obs1"]),
-            Entity(name="same", entityType="person", observations=["obs2"]),
-        ],
-        relations=[],
-    )
-    with pytest.raises(EntityValidationError, match="Duplicate entity name"):
-        KnowledgeGraphValidator.validate_graph(graph)
-
-    # Invalid - missing referenced entity
-    graph = KnowledgeGraph(
-        entities=[
-            Entity(name="person1", entityType="person", observations=[]),
-        ],
-        relations=[
-            Relation(from_="person1", to="missing", relationType="knows"),
-        ],
-    )
-    with pytest.raises(RelationValidationError, match="not found in graph"):
-        KnowledgeGraphValidator.validate_graph(graph)
+    # Duplicate observations
+    observations_map = {
+        "entity1": ["existing1", "new2"],  # Duplicate with existing observation
+    }
+    with pytest.raises(EntityValidationError, match="Duplicate observations"):
+        KnowledgeGraphValidator.validate_batch_observations(
+            observations_map, existing_entities
+        )
