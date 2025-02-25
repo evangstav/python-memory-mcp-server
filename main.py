@@ -53,7 +53,7 @@ mcp = FastMCP(
     version="0.2.0",
     instructions="""
     Memory MCP server providing knowledge graph functionality with semantic search capabilities.
-    
+
     Available tools:
     - get_entity: Retrieve entity by name
     - get_graph: Get entire knowledge graph
@@ -66,7 +66,7 @@ mcp = FastMCP(
     - delete_relation: Delete relation between entities
     - flush_memory: Persist changes to storage
     - regenerate_embeddings: Rebuild embeddings for all entities
-    
+
     The semantic search capabilities allow for:
     - Finding conceptually similar entities even when exact terms don't match
     - Understanding temporal references (recent, past, etc.)
@@ -131,7 +131,9 @@ async def get_graph() -> GraphResponse:
 
 
 @mcp.tool()
-async def create_entities(entities: List[Entity], ctx: Context = None) -> EntityResponse:
+async def create_entities(
+    entities: List[Entity], ctx: Context = None
+) -> EntityResponse:
     """Create multiple new entities."""
     try:
         if ctx:
@@ -249,9 +251,7 @@ async def search_memory(
 
         # Use enhanced search with semantic capabilities
         options = SearchOptions(
-            semantic=semantic, 
-            max_results=max_results, 
-            include_relations=True
+            semantic=semantic, max_results=max_results, include_relations=True
         )
         results = await kg.enhanced_search(query, options)
 
@@ -296,12 +296,8 @@ async def search_nodes(
         # Configure search options
         options = None
         if fuzzy:
-            options = SearchOptions(
-                fuzzy=True,
-                threshold=threshold,
-                semantic=False
-            )
-            
+            options = SearchOptions(fuzzy=True, threshold=threshold, semantic=False)
+
         # Use standard search
         results = await kg.search_nodes(query, options)
 
@@ -400,30 +396,32 @@ async def flush_memory(ctx: Context = None) -> OperationResponse:
 @mcp.tool()
 async def regenerate_embeddings(ctx: Context = None) -> OperationResponse:
     """Regenerate embeddings for all entities in the knowledge graph.
-    
+
     This is useful after importing data or if embeddings become outdated.
     """
     try:
         if ctx:
             ctx.info("Regenerating embeddings for all entities")
-            
+
         # Get all entities
         graph = await kg.read_graph()
         count = 0
-        
+
         # Process each entity
         for entity in graph.entities:
             # Create a combined text representation of the entity
-            entity_text = f"{entity.name} {entity.entityType} " + " ".join(entity.observations)
+            entity_text = f"{entity.name} {entity.entityType} " + " ".join(
+                entity.observations
+            )
             # Generate embedding
             embedding = kg.embedding_service.encode_text(entity_text)
             # Store embedding
             await kg.backend.store_embedding(entity.name, embedding)
             count += 1
-            
+
         return OperationResponse(
-            success=True, 
-            message=f"Successfully regenerated embeddings for {count} entities"
+            success=True,
+            message=f"Successfully regenerated embeddings for {count} entities",
         )
     except Exception as e:
         return OperationResponse(
