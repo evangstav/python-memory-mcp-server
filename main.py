@@ -275,6 +275,56 @@ async def search_memory(
 
 
 @mcp.tool()
+async def search_nodes(
+    query: str, fuzzy: bool = False, threshold: float = 80.0, ctx: Context = None
+) -> EntityResponse:
+    """Search for entities and relations matching query using exact or fuzzy matching.
+
+    Args:
+        query: Search query string
+        fuzzy: Whether to use fuzzy matching (default: False)
+        threshold: Threshold for fuzzy matching (default: 80.0)
+        ctx: Optional context for logging
+
+    Returns:
+        EntityResponse containing matches
+    """
+    try:
+        if ctx:
+            ctx.info(f"Searching for: {query}")
+
+        # Configure search options
+        options = None
+        if fuzzy:
+            options = SearchOptions(
+                fuzzy=True,
+                threshold=threshold,
+                semantic=False
+            )
+            
+        # Use standard search
+        results = await kg.search_nodes(query, options)
+
+        if not results.entities:
+            return EntityResponse(
+                success=True,
+                data={"entities": [], "relations": []},
+                error="No matching entities found in memory",
+                error_type="NO_RESULTS",
+            )
+
+        return EntityResponse(success=True, data=serialize_to_dict(results))
+    except ValueError as e:
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
+    except Exception as e:
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
+
+
+@mcp.tool()
 async def delete_entities(names: List[str], ctx: Context = None) -> OperationResponse:
     """Delete multiple entities and their relations."""
     try:
