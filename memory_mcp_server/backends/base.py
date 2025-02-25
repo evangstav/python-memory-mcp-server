@@ -195,13 +195,3 @@ class Backend(ABC):
             FileAccessError: If there are issues with retrieval
         """
         pass
-
-    @abstractmethod
-    async def store_embedding(self, entity_name: str, vector: np.ndarray) -> None:
-        """Store embedding vector for an entity."""
-        pass
-
-    @abstractmethod
-    async def get_embedding(self, entity_name: str) -> Optional[np.ndarray]:
-        """Get embedding vector for an entity."""
-        pass

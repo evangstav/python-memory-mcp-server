@@ -10,7 +10,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.prompts.base import Message, UserMessage
 from pydantic import BaseModel
 
-from memory_mcp_server.interfaces import Entity, Relation
+from memory_mcp_server.interfaces import Entity, Relation, SearchOptions
 from memory_mcp_server.knowledge_graph_manager import KnowledgeGraphManager
 
 # Error type constants
@@ -121,30 +121,24 @@ async def get_graph() -> GraphResponse:
 
 
 @mcp.tool()
-async def create_entities(self, entities: List[Entity]) -> List[Entity]:
+async def create_entities(entities: List[Entity], ctx: Context = None) -> EntityResponse:
     """Create multiple new entities."""
-    # Get existing entities for validation
-    graph = await self.read_graph()
-    existing_names = {entity.name for entity in graph.entities}
+    try:
+        if ctx:
+            ctx.info(f"Creating {len(entities)} entities")
 
-    # Validate all entities in one pass
-    KnowledgeGraphValidator.validate_batch_entities(entities, existing_names)
-
-    async with self._write_lock:
-        created_entities = await self.backend.create_entities(entities)
-
-        # Generate and store embeddings for new entities
-        for entity in created_entities:
-            # Create a combined text representation of the entity
-            entity_text = f"{entity.name} {entity.entityType} " + " ".join(
-                entity.observations
-            )
-            # Generate embedding
-            embedding = self.embedding_service.encode_text(entity_text)
-            # Store embedding
-            await self.backend.store_embedding(entity.name, embedding)
-
-        return created_entities
+        created = await kg.create_entities(entities)
+        return EntityResponse(
+            success=True, data={"entities": [e.to_dict() for e in created]}
+        )
+    except ValueError as e:
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
+    except Exception as e:
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
 
 
 @mcp.tool()
@@ -158,7 +152,7 @@ async def add_observation(
 
         # Check if entity exists
         exists = await kg.search_nodes(entity)
-        if not exists:
+        if not exists.entities:
             return OperationResponse(
                 success=False,
                 error=f"Entity '{entity}' not found",
@@ -166,10 +160,6 @@ async def add_observation(
             )
 
         await kg.add_observations(entity, [observation])
-        entity_text = f"{entity.name} {entity.entityType} " + " ".join(
-            entity.observations
-        )
-        # Update entity embedding with new observation
         return OperationResponse(success=True)
     except ValueError as e:
         return OperationResponse(
