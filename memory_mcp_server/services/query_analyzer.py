@@ -109,7 +109,7 @@ class QueryAnalyzer:
                 break
         
         # Determine query type based on analysis
-        if relation_type and ("between" in query_lower or "connecting" in query_lower):
+        if relation_type and ("between" in query_lower or "connecting" in query_lower or "connections" in query_lower):
             return QueryAnalysis(
                 query_type=QueryType.RELATION,
                 relation_type=relation_type,

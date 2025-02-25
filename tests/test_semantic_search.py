@@ -27,17 +27,17 @@ def sample_entities():
     """Create sample entities for testing."""
     return [
         Entity(
-            name="Python",
+            name="python",
             entityType="programming_language",
             observations=["Object-oriented language", "Created by Guido van Rossum", "Version 3.9 released in 2020"]
         ),
         Entity(
-            name="JavaScript",
+            name="javascript",
             entityType="programming_language",
             observations=["Used for web development", "Created in 1995", "ECMAScript standard"]
         ),
         Entity(
-            name="Machine Learning",
+            name="machine-learning",
             entityType="concept",
             observations=["Branch of AI", "Uses statistical methods", "Popular in data science"]
         ),
@@ -48,8 +48,8 @@ def sample_entities():
 def sample_relations():
     """Create sample relations for testing."""
     return [
-        Relation(from_="Python", to="Machine Learning", relationType="used_for"),
-        Relation(from_="JavaScript", to="Python", relationType="compared_to"),
+        Relation(from_="python", to="machine-learning", relationType="used_for"),
+        Relation(from_="javascript", to="python", relationType="compared_to"),
     ]
 
 
@@ -109,9 +109,11 @@ async def test_semantic_search(mock_embedding_service, sample_entities, sample_r
         )
     mock_backend.read_graph = mock_read_graph
     
-    # Make store_embedding a coroutine
-    async def mock_store_embedding(entity_name, vector):
+    # Make store_embedding a MagicMock that can be called as a coroutine
+    mock_store_embedding = MagicMock()
+    async def _store_embedding(entity_name, vector):
         pass
+    mock_store_embedding.side_effect = _store_embedding
     mock_backend.store_embedding = mock_store_embedding
     
     # Make get_embedding a coroutine
@@ -152,9 +154,11 @@ async def test_embedding_generation_on_entity_creation(mock_embedding_service, s
         return sample_entities
     mock_backend.create_entities = mock_create_entities
     
-    # Make store_embedding a coroutine
-    async def mock_store_embedding(entity_name, vector):
+    # Make store_embedding a MagicMock that can be called as a coroutine
+    mock_store_embedding = MagicMock()
+    async def _store_embedding(entity_name, vector):
         pass
+    mock_store_embedding.side_effect = _store_embedding
     mock_backend.store_embedding = mock_store_embedding
     
     # Create a knowledge graph manager with the mock backend
@@ -197,7 +201,7 @@ async def test_embedding_update_on_observation_addition(mock_embedding_service, 
         kg_manager = KnowledgeGraphManager(mock_backend)
         
         # Add observations
-        await kg_manager.add_observations("Python", ["New observation"])
+        await kg_manager.add_observations("python", ["New observation"])
         
         # Verify that store_embedding was called to update the embedding
         mock_backend.store_embedding.assert_called_once()
