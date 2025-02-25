@@ -1,6 +1,14 @@
 # Memory MCP Server
 
-A Model Context Protocol (MCP) server that provides knowledge graph functionality for managing entities, relations, and observations in memory, with strict validation rules to maintain data consistency.
+A Model Context Protocol (MCP) server that provides knowledge graph functionality for managing entities, relations, and observations in memory, with strict validation rules to maintain data consistency and semantic search capabilities.
+
+## Features
+
+- **Knowledge Graph Storage**: Store entities and relationships in a persistent graph structure
+- **Semantic Search**: Find conceptually similar entities using vector embeddings
+- **Natural Language Understanding**: Analyze queries to understand intent and context
+- **Temporal Awareness**: Handle time-based queries (recent, past, etc.)
+- **Flexible Storage Backend**: JSONL-based storage with caching for performance
 
 ## Installation
 
@@ -8,6 +16,12 @@ Install the server in Claude Desktop:
 
 ```bash
 mcp install main.py -v MEMORY_FILE_PATH=/path/to/memory.jsonl
+```
+
+For semantic search capabilities, install additional dependencies:
+
+```bash
+pip install -r requirements-semantic-search.txt
 ```
 
 ## Data Validation Rules
@@ -142,10 +156,12 @@ if not result.success:
         print(f"Error creating relation: {result.error}")
 ```
 
-### Search Memory
+### Search Memory (Semantic Search)
 ```python
 result = await session.call_tool("search_memory", {
-    "query": "most recent workout"  # Supports natural language queries
+    "query": "recent projects related to machine learning",  # Natural language query
+    "semantic": True,  # Enable semantic search
+    "max_results": 5   # Limit results
 })
 if result.success:
     if result.error_type == "NO_RESULTS":
@@ -157,15 +173,30 @@ else:
     print(f"Error searching memory: {result.error}")
 ```
 
-The search functionality supports:
+The semantic search functionality supports:
+- Natural language understanding
 - Temporal queries (e.g., "most recent", "last", "latest")
-- Activity queries (e.g., "workout", "exercise")
-- General entity searches
-- Fuzzy matching with 80% similarity threshold
-- Weighted search across:
-  - Entity names (weight: 1.0)
-  - Entity types (weight: 0.8)
-  - Observations (weight: 0.6)
+- Entity type filtering (e.g., "people who know about Python")
+- Relation-focused queries (e.g., "connections between people")
+- Conceptual similarity without exact keyword matches
+
+### Search Nodes (Traditional Search)
+```python
+result = await session.call_tool("search_nodes", {
+    "query": "python",
+    "fuzzy": True,      # Enable fuzzy matching
+    "threshold": 80.0   # Similarity threshold
+})
+```
+
+### Regenerate Embeddings
+```python
+result = await session.call_tool("regenerate_embeddings", {})
+if result.success:
+    print(f"Success: {result.message}")
+else:
+    print(f"Error regenerating embeddings: {result.error}")
+```
 
 ### Delete Entities
 ```python
@@ -208,6 +239,7 @@ The server uses the following error types:
 - `INTERNAL_ERROR`: Server-side error
 - `ALREADY_EXISTS`: Resource already exists
 - `INVALID_RELATION`: Invalid relation between entities
+- `NO_RESULTS`: Search returned no matches
 
 ## Response Models
 
@@ -237,6 +269,7 @@ class OperationResponse(BaseModel):
     success: bool
     error: Optional[str] = None
     error_type: Optional[str] = None
+    message: Optional[str] = None  # For success messages
 ```
 
 ## Development
@@ -244,7 +277,11 @@ class OperationResponse(BaseModel):
 ### Running Tests
 
 ```bash
+# Run all tests
 pytest tests/
+
+# Run semantic search tests
+pytest tests/test_semantic_search.py
 ```
 
 ### Adding New Features
@@ -252,3 +289,4 @@ pytest tests/
 1. Update validation rules in `validation.py`
 2. Add tests in `tests/test_validation.py`
 3. Implement changes in `knowledge_graph_manager.py`
+4. For semantic search enhancements, modify `services/embedding_service.py` and `services/query_analyzer.py`

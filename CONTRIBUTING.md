@@ -4,7 +4,7 @@ Thank you for your interest in contributing to the Memory MCP Server! This docum
 
 ## Project Overview
 
-The Memory MCP Server is an implementation of the Model Context Protocol (MCP) that provides Claude with a persistent knowledge graph capability. The server manages entities and relations in a graph structure, supporting multiple backend storage options with features like caching, indexing, and atomic operations.
+The Memory MCP Server is an implementation of the Model Context Protocol (MCP) that provides Claude with a persistent knowledge graph capability. The server manages entities and relations in a graph structure, supporting multiple backend storage options with features like caching, indexing, semantic search, and atomic operations.
 
 ### Key Components
 
@@ -12,6 +12,7 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - `Entity`: Nodes in the graph containing name, type, and observations
    - `Relation`: Edges between entities with relation types
    - `KnowledgeGraph`: Container for entities and relations
+   - `SearchOptions`: Configuration for search behavior
 
 2. **Backend System**
    - `Backend`: Abstract interface defining storage operations
@@ -24,24 +25,29 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Provides indexing for fast lookups
    - Ensures atomic operations
    - Manages CRUD operations for entities and relations
+   - Coordinates semantic search capabilities
 
-4. **MCP Server Implementation**
+4. **Services**
+   - `EmbeddingService`: Generates vector embeddings for semantic search
+   - `QueryAnalyzer`: Analyzes natural language queries to determine intent
+
+5. **MCP Server Implementation**
    - Exposes tools for graph manipulation
    - Handles serialization/deserialization
    - Provides error handling and logging
 
    Available MCP Tools:
    - `create_entities`: Create multiple new entities in the knowledge graph
-   - `create_relations`: Create relations between entities (in active voice)
-   - `add_observations`: Add new observations to existing entities
+   - `create_relations`: Create relations between entities
+   - `add_observation`: Add new observations to existing entities
    - `delete_entities`: Delete entities and their relations
-   - `delete_observations`: Delete specific observations from entities
-   - `delete_relations`: Delete specific relations
-   - `read_graph`: Read the entire knowledge graph
-   - `search_nodes`: Search entities and relations by query
-   - `open_nodes`: Retrieve specific nodes by name
-
-   Each tool has a defined input schema that validates the arguments. See the tool schemas in `main.py` for detailed parameter specifications.
+   - `delete_relation`: Delete specific relations
+   - `search_memory`: Search using semantic understanding and natural language
+   - `search_nodes`: Search using exact or fuzzy matching
+   - `get_entity`: Retrieve entity by name
+   - `get_graph`: Get entire knowledge graph
+   - `flush_memory`: Persist changes to storage
+   - `regenerate_embeddings`: Rebuild embeddings for all entities
 
 ## Getting Started
 
@@ -62,6 +68,9 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    # Install all dependencies (including test)
    uv pip install -e ".[test]"
 
+   # Install semantic search dependencies
+   pip install -r requirements-semantic-search.txt
+
    # Install pre-commit hooks
    pre-commit install
    ```
@@ -74,8 +83,8 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    # Run with coverage report
    pytest --cov=memory_mcp_server
 
-   # Run specific backend tests
-   pytest tests/test_backends/test_jsonl.py
+   # Run semantic search tests
+   pytest tests/test_semantic_search.py
    ```
 
 4. **Run the Server Locally**
@@ -121,6 +130,7 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Tests use pytest with pytest-asyncio for async testing
    - Test files must follow pattern `test_*.py` in the `tests/` directory
    - Backend-specific tests in `tests/test_backends/`
+   - Semantic search tests in `tests/test_semantic_search.py`
    - Async tests are automatically detected (asyncio_mode = "auto")
    - Test fixtures use function-level event loop scope
 
@@ -136,18 +146,13 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Integration tests for MCP server functionality
    - Performance tests for operations on large graphs
    - Async tests for I/O operations and concurrency
-
-4. **Test Configuration**
-   - Configured in pyproject.toml under [tool.pytest.ini_options]
-   - Uses quiet mode by default (-q)
-   - Shows extra test summary (-ra)
-   - Test discovery in tests/ directory
+   - Semantic search tests for embedding and query analysis
 
 ### Adding New Features
 
 1. **New Backend Implementation**
    - Create new class implementing `Backend` interface
-   - Implement all required methods
+   - Implement all required methods including embedding storage
    - Add backend-specific configuration options
    - Create comprehensive tests
    - Update documentation and CLI
@@ -159,57 +164,24 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Ensure atomic operations
    - Add validation and error handling
 
-   Key operations include:
-   - Entity creation/deletion
-   - Relation creation/deletion
-   - Observation management (adding/removing observations to entities)
-   - Graph querying and search
-   - Atomic write operations with locking
+3. **Semantic Search Enhancements**
+   - Modify `EmbeddingService` for embedding generation
+   - Update `QueryAnalyzer` for query understanding
+   - Enhance the `enhanced_search` method in `KnowledgeGraphManager`
+   - Add tests in `test_semantic_search.py`
 
-3. **MCP Tools**
+4. **MCP Tools**
    - Define tool schema in `main.py`
    - Implement tool handler function
-   - Add to `TOOLS` dictionary
+   - Add to server instructions
    - Include appropriate error handling
 
-4. **Performance Considerations**
+5. **Performance Considerations**
    - Consider backend-specific optimizations
    - Implement efficient caching strategies
    - Optimize for large graphs
    - Handle memory efficiently
-
-### Adding a New Backend
-
-1. Create new backend class:
-   ```python
-   from .base import Backend
-
-   class NewBackend(Backend):
-       def __init__(self, config_params):
-           self.config = config_params
-
-       async def initialize(self) -> None:
-           # Setup connection, create indices, etc.
-           pass
-
-       async def create_entities(self, entities: List[Entity]) -> List[Entity]:
-           # Implementation
-           pass
-
-       # Implement other required methods...
-   ```
-
-2. Add backend tests:
-   ```python
-   # tests/test_backends/test_new_backend.py
-   @pytest.mark.asyncio
-   async def test_new_backend_operations():
-       backend = NewBackend(test_config)
-       await backend.initialize()
-       # Test implementations
-   ```
-
-3. Update CLI and configuration
+   - Consider embedding computation costs
 
 ## Pull Request Process
 
@@ -251,11 +223,17 @@ The Memory MCP Server is an implementation of the Model Context Protocol (MCP) t
    - Check cache effectiveness
    - Profile large operations
 
+4. **Semantic Search Issues**
+   - Verify sentence-transformers installation
+   - Check embedding file permissions
+   - Monitor memory usage with large graphs
+
 ## Additional Resources
 
 - [Model Context Protocol Documentation](https://github.com/ModelContext/protocol)
 - [Python asyncio Documentation](https://docs.python.org/3/library/asyncio.html)
 - [Python Type Hints](https://docs.python.org/3/library/typing.html)
+- [Sentence Transformers Documentation](https://www.sbert.net/)
 
 ## License
 
