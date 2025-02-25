@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
+import numpy as np
+
 from .backends.base import Backend
 from .backends.jsonl import JsonlBackend
 from .interfaces import Entity, KnowledgeGraph, Relation, SearchOptions

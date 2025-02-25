@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 import aiofiles
+import numpy as np
 from thefuzz import fuzz
 
 from ..exceptions import EntityNotFoundError, FileAccessError
