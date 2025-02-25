@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pickle
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -589,6 +590,47 @@ class JsonlBackend(Backend):
                     await self._save_graph(graph)
                     self._dirty = False
                     self._cache_timestamp = time.monotonic()
+
+    # Embedding Handling
+    async def store_embedding(self, entity_name: str, vector: np.ndarray) -> None:
+        # Store as a separate file alongside the main JSONL file
+        embedding_path = self.memory_path.with_suffix(".embeddings")
+        async with self._write_lock:
+            try:
+                # Load existing embeddings
+                embeddings = {}
+                if embedding_path.exists():
+                    async with aiofiles.open(embedding_path, mode="rb") as f:
+                        content = await f.read()
+                        if content:
+                            embeddings = pickle.loads(content)
+
+                # Update with new embedding
+                embeddings[entity_name] = vector.tolist()
+
+                # Save back to file
+                async with aiofiles.open(embedding_path, mode="wb") as f:
+                    await f.write(pickle.dumps(embeddings))
+            except Exception as e:
+                raise FileAccessError(f"Error storing embedding: {str(e)}")  # noqa: B904
+
+    async def get_embedding(self, entity_name: str) -> Optional[np.ndarray]:
+        embedding_path = self.memory_path.with_suffix(".embeddings")
+        if not embedding_path.exists():
+            return None
+
+        try:
+            async with aiofiles.open(embedding_path, mode="rb") as f:
+                content = await f.read()
+                if not content:
+                    return None
+                embeddings = pickle.loads(content)
+
+            if entity_name in embeddings:
+                return np.array(embeddings[entity_name])
+            return None
+        except Exception as e:
+            raise FileAccessError(f"Error getting embedding: {str(e)}")
 
     #
     # Transaction Methods

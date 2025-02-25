@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Union
 from .backends.base import Backend
 from .backends.jsonl import JsonlBackend
 from .interfaces import Entity, KnowledgeGraph, Relation, SearchOptions
+from .services.embedding_service import EmbeddingService
+from .services.query_analyzer import QueryAnalyzer, QueryType
 from .validation import KnowledgeGraphValidator, ValidationError
 
 
@@ -32,6 +34,9 @@ class KnowledgeGraphManager:
         else:
             self.backend = backend
         self._write_lock = asyncio.Lock()
+
+        self.embedding_service = EmbeddingService()
+        self.query_analyzer = QueryAnalyzer()
 
     async def initialize(self) -> None:
         """Initialize the backend connection."""
@@ -209,3 +214,96 @@ class KnowledgeGraphManager:
         # All validation passed, perform the batch update
         async with self._write_lock:
             await self.backend.add_batch_observations(observations_map)
+
+    async def enhanced_search(
+        self, query: str, options: Optional[SearchOptions] = None
+    ) -> KnowledgeGraph:
+        """Enhanced search implementation using semantic similarity and query understanding."""
+        # Analyze the query
+        query_analysis = self.query_analyzer.analyze_query(query)
+
+        # Get the base graph
+        graph = await self.read_graph()
+
+        # Initialize results
+        results = []
+
+        # Handle different query types
+        if query_analysis.query_type == QueryType.TEMPORAL:
+            # Temporal queries (most recent, etc.)
+            filtered_entities = [
+                e
+                for e in graph.entities
+                if query_analysis.target_entity in e.entityType.lower()
+            ]
+
+            # Sort by recency if available (assuming observations contain timestamps)
+            # This is a simplification - would need actual timestamp extraction
+            filtered_entities.sort(
+                key=lambda e: max(
+                    (obs for obs in e.observations if "date" in obs.lower()), default=""
+                ),
+                reverse=True,
+            )
+
+            results = filtered_entities[:5]  # Return top 5 most recent
+
+        elif query_analysis.query_type == QueryType.ENTITY:
+            # Entity type specific search
+            entity_types = query_analysis.additional_params.get("entity_types", [])
+            if entity_types:
+                results = [e for e in graph.entities if e.entityType in entity_types]
+
+                # If we have too many results, use semantic search to narrow down
+                if len(results) > 10:
+                    results = await self._semantic_search(query, results)
+
+        else:
+            # General semantic search
+            results = await self._semantic_search(query, graph.entities)
+
+        # Get relations between the matched entities
+        entity_names = {entity.name for entity in results}
+        matched_relations = [
+            rel
+            for rel in graph.relations
+            if rel.from_ in entity_names and rel.to in entity_names
+        ]
+
+        return KnowledgeGraph(entities=results, relations=matched_relations)
+
+    async def _semantic_search(
+        self, query: str, entities: List[Entity]
+    ) -> List[Entity]:
+        """Perform semantic search using embeddings."""
+        # Encode the query
+        query_vector = self.embedding_service.encode_text(query)
+
+        # Get embeddings for entities
+        entity_vectors = []
+        entity_map = {}
+
+        for i, entity in enumerate(entities):
+            # Create a combined text representation of the entity
+            entity_text = f"{entity.name} {entity.entityType} " + " ".join(
+                entity.observations
+            )
+            entity_vectors.append(entity_text)
+            entity_map[i] = entity
+
+        # Get vector embeddings for all entities
+        if entity_vectors:
+            embeddings = self.embedding_service.encode_batch(entity_vectors)
+
+            # Compute similarities
+            similarities = self.embedding_service.compute_similarity(
+                query_vector, embeddings
+            )
+
+            # Get top results (indices sorted by similarity)
+            top_indices = np.argsort(similarities)[::-1][:10]  # Top 10 results
+
+            # Return entities in order of relevance
+            return [entity_map[idx] for idx in top_indices]
+
+        return []

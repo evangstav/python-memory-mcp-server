@@ -165,3 +165,13 @@ class Backend(ABC):
     async def commit_transaction(self) -> None:
         """Commit the current transaction."""
         pass
+
+    @abstractmethod
+    async def store_embedding(self, entity_name: str, vector: np.ndarray) -> None:
+        """Store embedding vector for an entity."""
+        pass
+
+    @abstractmethod
+    async def get_embedding(self, entity_name: str) -> Optional[np.ndarray]:
+        """Get embedding vector for an entity."""
+        pass

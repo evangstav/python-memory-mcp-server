@@ -121,19 +121,30 @@ async def get_graph() -> GraphResponse:
 
 
 @mcp.tool()
-async def create_entities(entities: List[Entity]) -> OperationResponse:
+async def create_entities(self, entities: List[Entity]) -> List[Entity]:
     """Create multiple new entities."""
-    try:
-        await kg.create_entities(entities)
-        return OperationResponse(success=True)
-    except ValueError as e:
-        return OperationResponse(
-            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
-        )
-    except Exception as e:
-        return OperationResponse(
-            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
-        )
+    # Get existing entities for validation
+    graph = await self.read_graph()
+    existing_names = {entity.name for entity in graph.entities}
+
+    # Validate all entities in one pass
+    KnowledgeGraphValidator.validate_batch_entities(entities, existing_names)
+
+    async with self._write_lock:
+        created_entities = await self.backend.create_entities(entities)
+
+        # Generate and store embeddings for new entities
+        for entity in created_entities:
+            # Create a combined text representation of the entity
+            entity_text = f"{entity.name} {entity.entityType} " + " ".join(
+                entity.observations
+            )
+            # Generate embedding
+            embedding = self.embedding_service.encode_text(entity_text)
+            # Store embedding
+            await self.backend.store_embedding(entity.name, embedding)
+
+        return created_entities
 
 
 @mcp.tool()
@@ -155,6 +166,10 @@ async def add_observation(
             )
 
         await kg.add_observations(entity, [observation])
+        entity_text = f"{entity.name} {entity.entityType} " + " ".join(
+            entity.observations
+        )
+        # Update entity embedding with new observation
         return OperationResponse(success=True)
     except ValueError as e:
         return OperationResponse(
@@ -212,43 +227,25 @@ async def search_memory(query: str, ctx: Context = None) -> EntityResponse:
     """Search memory using natural language queries.
 
     Handles:
+    - Semantic search for conceptually similar entities
     - Temporal queries (e.g., "most recent", "last", "latest")
-    - Activity queries (e.g., "workout", "exercise")
-    - General entity searches
+    - Entity-specific queries (e.g., "people who know about Python")
+    - General knowledge graph exploration
     """
     try:
         if ctx:
-            ctx.info(f"Searching for: {query}")
+            ctx.info(f"Enhanced search for: {query}")
 
-        # Handle temporal queries
-        temporal_keywords = ["recent", "last", "latest"]
-        is_temporal = any(keyword in query.lower() for keyword in temporal_keywords)
+        # Use the enhanced search implementation
+        results = await kg.enhanced_search(query)
 
-        # Extract activity type from query
-        activity_type = None
-        if "workout" in query.lower():
-            activity_type = "workout"
-        elif "exercise" in query.lower():
-            activity_type = "exercise"
-        elif "physical activity" in query.lower():
-            activity_type = "physical_activity"
-
-        # Search for entities
-        results = await kg.search_nodes(activity_type if activity_type else query)
-
-        if not results:
+        if not results.entities:
             return EntityResponse(
                 success=True,
                 data={"entities": [], "relations": []},
-                error="No matching activities found in memory",
+                error="No matching entities found in memory",
                 error_type="NO_RESULTS",
             )
-
-        # For temporal queries, sort by timestamp if available
-        if is_temporal and isinstance(results, list):
-            results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-            if results:
-                results = results[0]  # Get most recent
 
         return EntityResponse(success=True, data=serialize_to_dict(results))
     except ValueError as e:
