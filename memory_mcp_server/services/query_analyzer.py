@@ -69,6 +69,7 @@ class QueryAnalyzer:
             (r"\b(part of|belongs to|member of)\b", "membership"),
             (r"\b(created|authored|developed|built)\b", "creation"),
             (r"\b(located in|situated at|found in)\b", "location"),
+            (r"\b(connections|connection)\b", "general"),  # Add connections pattern
         ]
 
         # Attribute patterns

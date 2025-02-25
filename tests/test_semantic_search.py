@@ -88,7 +88,7 @@ async def test_query_analyzer():
     assert "event" in result.additional_params.get("entity_types", [])
 
     # Test relation detection
-    result = analyzer.analyze_query("Show connections between persons")
+    result = analyzer.analyze_query("Show connections between people")
     assert result.query_type == QueryType.RELATION
     assert "person" in result.additional_params.get("entity_types", [])
 
