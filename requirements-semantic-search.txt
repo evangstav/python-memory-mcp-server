@@ -1,0 +1,4 @@
+# Requirements for semantic search capabilities
+sentence-transformers>=2.2.2
+numpy>=1.24.0
+faiss-cpu>=1.7.0

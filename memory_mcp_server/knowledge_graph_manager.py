@@ -34,6 +34,10 @@ class KnowledgeGraphManager:
         else:
             self.backend = backend
         self._write_lock = asyncio.Lock()
+        
+        # Initialize services for enhanced search capabilities
+        self.embedding_service = EmbeddingService()
+        self.query_analyzer = QueryAnalyzer()
 
         self.embedding_service = EmbeddingService()
         self.query_analyzer = QueryAnalyzer()
@@ -66,7 +70,18 @@ class KnowledgeGraphManager:
         KnowledgeGraphValidator.validate_batch_entities(entities, existing_names)
 
         async with self._write_lock:
-            return await self.backend.create_entities(entities)
+            created_entities = await self.backend.create_entities(entities)
+            
+            # Generate and store embeddings for new entities
+            for entity in created_entities:
+                # Create a combined text representation of the entity
+                entity_text = f"{entity.name} {entity.entityType} " + " ".join(entity.observations)
+                # Generate embedding
+                embedding = self.embedding_service.encode_text(entity_text)
+                # Store embedding
+                await self.backend.store_embedding(entity.name, embedding)
+                
+            return created_entities
 
     async def delete_entities(self, entity_names: List[str]) -> List[str]:
         """Delete multiple existing entities by name.
@@ -150,11 +165,165 @@ class KnowledgeGraphManager:
         Raises:
             ValueError: If query is empty or options are invalid
         """
+        # If semantic search is requested, use enhanced search
+        if options and options.semantic:
+            return await self.enhanced_search(query, options)
+        
+        # Otherwise use the standard search
         return await self.backend.search_nodes(query, options)
 
     async def flush(self) -> None:
         """Ensure any pending changes are persisted."""
         await self.backend.flush()
+        
+    async def enhanced_search(
+        self, query: str, options: Optional[SearchOptions] = None
+    ) -> KnowledgeGraph:
+        """Enhanced search implementation using semantic similarity and query understanding.
+        
+        Args:
+            query: Search query string
+            options: Optional SearchOptions for configuring search behavior
+            
+        Returns:
+            KnowledgeGraph containing semantically relevant matches
+        """
+        # Analyze the query
+        query_analysis = self.query_analyzer.analyze_query(query)
+
+        # Get the base graph
+        graph = await self.read_graph()
+
+        # Initialize results
+        results = []
+        max_results = options.max_results if options and options.max_results else 10
+
+        # Handle different query types
+        if query_analysis.query_type == QueryType.TEMPORAL:
+            # Temporal queries (most recent, etc.)
+            entity_types = query_analysis.additional_params.get("entity_types", [])
+            
+            filtered_entities = graph.entities
+            if entity_types:
+                filtered_entities = [
+                    e for e in graph.entities
+                    if any(et in e.entityType.lower() for et in entity_types)
+                ]
+
+            # Sort by recency if available (assuming observations contain timestamps)
+            # This is a simplification - would need actual timestamp extraction
+            if query_analysis.temporal_reference == "recent":
+                filtered_entities.sort(
+                    key=lambda e: max((obs for obs in e.observations if "date" in obs.lower()),
+                                    default=""),
+                    reverse=True
+                )
+            elif query_analysis.temporal_reference == "past":
+                filtered_entities.sort(
+                    key=lambda e: max((obs for obs in e.observations if "date" in obs.lower()),
+                                    default="")
+                )
+
+            results = filtered_entities[:max_results]
+
+        elif query_analysis.query_type == QueryType.ENTITY:
+            # Entity type specific search
+            entity_types = query_analysis.additional_params.get("entity_types", [])
+            if entity_types:
+                results = [
+                    e for e in graph.entities 
+                    if any(et in e.entityType.lower() for et in entity_types)
+                ]
+
+                # If we have too many results, use semantic search to narrow down
+                if len(results) > max_results:
+                    results = await self._semantic_search(query, results, max_results)
+            else:
+                # General semantic search
+                results = await self._semantic_search(query, graph.entities, max_results)
+
+        elif query_analysis.query_type == QueryType.RELATION:
+            # Relation-focused search
+            # First find entities that match the query semantically
+            candidate_entities = await self._semantic_search(query, graph.entities, max_results * 2)
+            entity_names = {entity.name for entity in candidate_entities}
+            
+            # Find relations between these entities
+            matched_relations = [
+                rel for rel in graph.relations
+                if rel.from_ in entity_names and rel.to in entity_names
+            ]
+            
+            # Get all entities involved in these relations
+            relation_entity_names = {rel.from_ for rel in matched_relations}.union(
+                {rel.to for rel in matched_relations}
+            )
+            
+            results = [e for e in candidate_entities if e.name in relation_entity_names]
+            
+            # If we don't have enough results, add more from the candidates
+            if len(results) < max_results:
+                additional = [e for e in candidate_entities if e.name not in relation_entity_names]
+                results.extend(additional[:max_results - len(results)])
+
+        else:
+            # General semantic search
+            results = await self._semantic_search(query, graph.entities, max_results)
+
+        # Get relations between the matched entities if requested
+        matched_relations = []
+        if options and options.include_relations:
+            entity_names = {entity.name for entity in results}
+            matched_relations = [
+                rel for rel in graph.relations
+                if rel.from_ in entity_names and rel.to in entity_names
+            ]
+
+        return KnowledgeGraph(entities=results, relations=matched_relations)
+
+    async def _semantic_search(
+        self, query: str, entities: List[Entity], max_results: int = 10
+    ) -> List[Entity]:
+        """Perform semantic search using embeddings.
+        
+        Args:
+            query: Search query string
+            entities: List of entities to search through
+            max_results: Maximum number of results to return
+            
+        Returns:
+            List of entities sorted by semantic relevance
+        """
+        if not entities:
+            return []
+            
+        # Encode the query
+        query_vector = self.embedding_service.encode_text(query)
+
+        # Get embeddings for entities
+        entity_vectors = []
+        entity_map = {}
+
+        for i, entity in enumerate(entities):
+            # Create a combined text representation of the entity
+            entity_text = f"{entity.name} {entity.entityType} " + " ".join(entity.observations)
+            entity_vectors.append(entity_text)
+            entity_map[i] = entity
+
+        # Get vector embeddings for all entities
+        if entity_vectors:
+            embeddings = self.embedding_service.encode_batch(entity_vectors)
+
+            # Compute similarities
+            similarities = self.embedding_service.compute_similarity(query_vector, embeddings)
+
+            # Get top results (indices sorted by similarity)
+            top_indices = np.argsort(similarities)[::-1][:max_results]  # Top N results
+
+            # Return entities in order of relevance
+            return [entity_map[idx] for idx in top_indices]
+
+        return []
 
     async def add_observations(self, entity_name: str, observations: List[str]) -> None:
         """Add observations to an existing entity.
@@ -188,6 +357,16 @@ class KnowledgeGraphManager:
 
         async with self._write_lock:
             await self.backend.add_observations(entity_name, observations)
+            
+            # Update embedding after adding observations
+            updated_entity = next((e for e in (await self.read_graph()).entities if e.name == entity_name), None)
+            if updated_entity:
+                # Create a combined text representation of the updated entity
+                entity_text = f"{updated_entity.name} {updated_entity.entityType} " + " ".join(updated_entity.observations)
+                # Generate new embedding
+                embedding = self.embedding_service.encode_text(entity_text)
+                # Store updated embedding
+                await self.backend.store_embedding(entity_name, embedding)
 
     async def add_batch_observations(
         self, observations_map: Dict[str, List[str]]
@@ -214,6 +393,22 @@ class KnowledgeGraphManager:
         # All validation passed, perform the batch update
         async with self._write_lock:
             await self.backend.add_batch_observations(observations_map)
+            
+            # Update embeddings for all modified entities
+            updated_graph = await self.read_graph()
+            updated_entities = {
+                name: next((e for e in updated_graph.entities if e.name == name), None)
+                for name in observations_map.keys()
+            }
+            
+            for name, entity in updated_entities.items():
+                if entity:
+                    # Create a combined text representation of the updated entity
+                    entity_text = f"{entity.name} {entity.entityType} " + " ".join(entity.observations)
+                    # Generate new embedding
+                    embedding = self.embedding_service.encode_text(entity_text)
+                    # Store updated embedding
+                    await self.backend.store_embedding(name, embedding)
 
     async def enhanced_search(
         self, query: str, options: Optional[SearchOptions] = None

@@ -87,6 +87,9 @@ class SearchOptions:
     fuzzy: bool = False
     threshold: float = 80.0
     weights: Optional[dict[str, float]] = None
+    semantic: bool = False
+    max_results: int = 10
+    include_relations: bool = True
 
 
 class BatchOperationType(Enum):

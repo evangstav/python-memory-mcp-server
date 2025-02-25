@@ -1,7 +1,9 @@
 """Backend interface for Memory MCP Server storage implementations."""
 
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
+
+import numpy as np
 
 from ..interfaces import (
     BatchOperation,
@@ -164,6 +166,34 @@ class Backend(ABC):
     @abstractmethod
     async def commit_transaction(self) -> None:
         """Commit the current transaction."""
+        pass
+        
+    @abstractmethod
+    async def store_embedding(self, entity_name: str, vector: np.ndarray) -> None:
+        """Store embedding vector for an entity.
+        
+        Args:
+            entity_name: Name of the entity
+            vector: Embedding vector to store
+            
+        Raises:
+            FileAccessError: If there are issues with storage
+        """
+        pass
+
+    @abstractmethod
+    async def get_embedding(self, entity_name: str) -> Optional[np.ndarray]:
+        """Get embedding vector for an entity.
+        
+        Args:
+            entity_name: Name of the entity
+            
+        Returns:
+            Embedding vector if available, None otherwise
+            
+        Raises:
+            FileAccessError: If there are issues with retrieval
+        """
         pass
 
     @abstractmethod

@@ -223,7 +223,9 @@ async def create_relation(
 
 
 @mcp.tool()
-async def search_memory(query: str, ctx: Context = None) -> EntityResponse:
+async def search_memory(
+    query: str, semantic: bool = True, ctx: Context = None
+) -> EntityResponse:
     """Search memory using natural language queries.
 
     Handles:
@@ -231,13 +233,22 @@ async def search_memory(query: str, ctx: Context = None) -> EntityResponse:
     - Temporal queries (e.g., "most recent", "last", "latest")
     - Entity-specific queries (e.g., "people who know about Python")
     - General knowledge graph exploration
+
+    Args:
+        query: Natural language search query
+        semantic: Whether to use semantic search (default: True)
+        ctx: Optional context for logging
+
+    Returns:
+        EntityResponse containing matches
     """
     try:
         if ctx:
             ctx.info(f"Enhanced search for: {query}")
 
-        # Use the enhanced search implementation
-        results = await kg.enhanced_search(query)
+        # Use enhanced search with semantic capabilities
+        options = SearchOptions(semantic=semantic, max_results=10, include_relations=True)
+        results = await kg.enhanced_search(query, options)
 
         if not results.entities:
             return EntityResponse(
