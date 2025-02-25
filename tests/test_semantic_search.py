@@ -101,12 +101,23 @@ async def test_semantic_search(mock_embedding_service, sample_entities, sample_r
     """Test semantic search functionality."""
     # Create a mock backend
     mock_backend = MagicMock()
-    mock_backend.read_graph.return_value = KnowledgeGraph(
-        entities=sample_entities,
-        relations=sample_relations
-    )
-    mock_backend.store_embedding = MagicMock()
-    mock_backend.get_embedding = MagicMock(return_value=None)
+    # Make read_graph a coroutine that returns a KnowledgeGraph
+    async def mock_read_graph():
+        return KnowledgeGraph(
+            entities=sample_entities,
+            relations=sample_relations
+        )
+    mock_backend.read_graph = mock_read_graph
+    
+    # Make store_embedding a coroutine
+    async def mock_store_embedding(entity_name, vector):
+        pass
+    mock_backend.store_embedding = mock_store_embedding
+    
+    # Make get_embedding a coroutine
+    async def mock_get_embedding(entity_name):
+        return None
+    mock_backend.get_embedding = mock_get_embedding
     
     # Create a knowledge graph manager with the mock backend
     with patch("memory_mcp_server.knowledge_graph_manager.EmbeddingService", return_value=mock_embedding_service):
@@ -130,9 +141,21 @@ async def test_embedding_generation_on_entity_creation(mock_embedding_service, s
     """Test that embeddings are generated when entities are created."""
     # Create a mock backend
     mock_backend = MagicMock()
-    mock_backend.read_graph.return_value = KnowledgeGraph(entities=[], relations=[])
-    mock_backend.create_entities.return_value = sample_entities
-    mock_backend.store_embedding = MagicMock()
+    
+    # Make read_graph a coroutine
+    async def mock_read_graph():
+        return KnowledgeGraph(entities=[], relations=[])
+    mock_backend.read_graph = mock_read_graph
+    
+    # Make create_entities a coroutine
+    async def mock_create_entities(entities):
+        return sample_entities
+    mock_backend.create_entities = mock_create_entities
+    
+    # Make store_embedding a coroutine
+    async def mock_store_embedding(entity_name, vector):
+        pass
+    mock_backend.store_embedding = mock_store_embedding
     
     # Create a knowledge graph manager with the mock backend
     with patch("memory_mcp_server.knowledge_graph_manager.EmbeddingService", return_value=mock_embedding_service):
@@ -150,12 +173,24 @@ async def test_embedding_update_on_observation_addition(mock_embedding_service, 
     """Test that embeddings are updated when observations are added."""
     # Create a mock backend
     mock_backend = MagicMock()
-    mock_backend.read_graph.side_effect = [
-        KnowledgeGraph(entities=sample_entities, relations=[]),  # First call
-        KnowledgeGraph(entities=sample_entities, relations=[])   # Second call after adding observations
-    ]
-    mock_backend.add_observations = MagicMock()
-    mock_backend.store_embedding = MagicMock()
+    
+    # Set up read_graph to return different values on successive calls
+    read_graph_calls = 0
+    async def mock_read_graph():
+        nonlocal read_graph_calls
+        read_graph_calls += 1
+        return KnowledgeGraph(entities=sample_entities, relations=[])
+    mock_backend.read_graph = mock_read_graph
+    
+    # Make add_observations a coroutine
+    async def mock_add_observations(entity_name, observations):
+        pass
+    mock_backend.add_observations = mock_add_observations
+    
+    # Make store_embedding a coroutine
+    async def mock_store_embedding(entity_name, vector):
+        pass
+    mock_backend.store_embedding = mock_store_embedding
     
     # Create a knowledge graph manager with the mock backend
     with patch("memory_mcp_server.knowledge_graph_manager.EmbeddingService", return_value=mock_embedding_service):

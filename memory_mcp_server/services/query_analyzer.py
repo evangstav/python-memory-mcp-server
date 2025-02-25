@@ -67,7 +67,7 @@ class QueryAnalyzer:
             (r"\b(type|kind|category)\b", "type"),
             (r"\b(when|date|time|period)\b", "time"),
             (r"\b(where|location|place)\b", "location"),
-            (r"\b(who|person|people)\b", "person"),
+            (r"\b(who)\b", "person"),  # Changed to not match "person" as an attribute
         ]
 
     def analyze_query(self, query: str) -> QueryAnalysis:
@@ -120,6 +120,12 @@ class QueryAnalyzer:
             return QueryAnalysis(
                 query_type=QueryType.TEMPORAL,
                 temporal_reference=temporal_ref,
+                additional_params={"entity_types": entity_types}
+            )
+        # Special case for "Find all X entities" pattern
+        elif "find" in query_lower and "entities" in query_lower and entity_types:
+            return QueryAnalysis(
+                query_type=QueryType.ENTITY,
                 additional_params={"entity_types": entity_types}
             )
         elif attribute_type and entity_types:
