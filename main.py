@@ -43,25 +43,35 @@ class OperationResponse(BaseModel):
     success: bool
     error: Optional[str] = None
     error_type: Optional[str] = None
+    message: Optional[str] = None
 
 
 # Create FastMCP server with dependencies and instructions
 mcp = FastMCP(
     "Memory",
-    dependencies=["pydantic", "jsonl"],
-    version="0.1.0",
+    dependencies=["pydantic", "jsonl", "numpy"],
+    version="0.2.0",
     instructions="""
-    Memory MCP server providing knowledge graph functionality.
+    Memory MCP server providing knowledge graph functionality with semantic search capabilities.
+    
     Available tools:
     - get_entity: Retrieve entity by name
     - get_graph: Get entire knowledge graph
     - create_entities: Create multiple entities
     - add_observation: Add observation to entity
     - create_relation: Create relation between entities
-    - search_memory: Search entities by query
+    - search_memory: Search entities using semantic understanding and natural language
+    - search_nodes: Search entities using exact or fuzzy matching
     - delete_entities: Delete multiple entities
     - delete_relation: Delete relation between entities
     - flush_memory: Persist changes to storage
+    - regenerate_embeddings: Rebuild embeddings for all entities
+    
+    The semantic search capabilities allow for:
+    - Finding conceptually similar entities even when exact terms don't match
+    - Understanding temporal references (recent, past, etc.)
+    - Identifying entity types and attributes in queries
+    - Detecting relationship-focused queries
     """,
 )
 
@@ -214,7 +224,7 @@ async def create_relation(
 
 @mcp.tool()
 async def search_memory(
-    query: str, semantic: bool = True, ctx: Context = None
+    query: str, semantic: bool = True, max_results: int = 10, ctx: Context = None
 ) -> EntityResponse:
     """Search memory using natural language queries.
 
@@ -227,6 +237,7 @@ async def search_memory(
     Args:
         query: Natural language search query
         semantic: Whether to use semantic search (default: True)
+        max_results: Maximum number of results to return (default: 10)
         ctx: Optional context for logging
 
     Returns:
@@ -237,7 +248,11 @@ async def search_memory(
             ctx.info(f"Enhanced search for: {query}")
 
         # Use enhanced search with semantic capabilities
-        options = SearchOptions(semantic=semantic, max_results=10, include_relations=True)
+        options = SearchOptions(
+            semantic=semantic, 
+            max_results=max_results, 
+            include_relations=True
+        )
         results = await kg.enhanced_search(query, options)
 
         if not results.entities:
@@ -332,6 +347,40 @@ async def flush_memory(ctx: Context = None) -> OperationResponse:
         )
 
 
+@mcp.tool()
+async def regenerate_embeddings(ctx: Context = None) -> OperationResponse:
+    """Regenerate embeddings for all entities in the knowledge graph.
+    
+    This is useful after importing data or if embeddings become outdated.
+    """
+    try:
+        if ctx:
+            ctx.info("Regenerating embeddings for all entities")
+            
+        # Get all entities
+        graph = await kg.read_graph()
+        count = 0
+        
+        # Process each entity
+        for entity in graph.entities:
+            # Create a combined text representation of the entity
+            entity_text = f"{entity.name} {entity.entityType} " + " ".join(entity.observations)
+            # Generate embedding
+            embedding = kg.embedding_service.encode_text(entity_text)
+            # Store embedding
+            await kg.backend.store_embedding(entity.name, embedding)
+            count += 1
+            
+        return OperationResponse(
+            success=True, 
+            message=f"Successfully regenerated embeddings for {count} entities"
+        )
+    except Exception as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
+
+
 @mcp.prompt()
 def create_entity_prompt(name: str, entity_type: str) -> list[Message]:
     """Generate prompt for entity creation."""
@@ -351,6 +400,7 @@ def search_prompt(query: str) -> list[Message]:
     return [
         UserMessage(
             f"I want to search my memory for information about: {query}\n\n"
+            f"I'll use semantic search to find the most relevant information. "
             f"What specific aspects of these results would you like me to explain?"
         )
     ]
