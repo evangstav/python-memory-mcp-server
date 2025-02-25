@@ -9,10 +9,12 @@ description = "MCP server for managing Claude's memory and knowledge graph"
 requires-python = ">=3.12"
 dependencies = [
     "aiofiles",
+    "faiss-cpu>=1.10.0",
     "loguru>=0.7.3",
     "mcp[cli]>=1.2.0",
     "memory-mcp-server",
     "ruff>=0.9.4",
+    "sentence-transformers>=3.4.1",
     "thefuzz[speedup]>=0.20.0", # Includes python-Levenshtein for performance
 ]
 

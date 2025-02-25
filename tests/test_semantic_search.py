@@ -17,7 +17,7 @@ def mock_embedding_service():
     with patch(
         "memory_mcp_server.services.embedding_service.SentenceTransformer",
         autospec=True,
-    ) as mock_st:
+    ) as _:
         service = EmbeddingService()
         # Mock the encode methods to return predictable vectors
         service.encode_text = MagicMock(return_value=np.array([0.1, 0.2, 0.3]))
@@ -88,7 +88,7 @@ async def test_query_analyzer():
     assert "event" in result.additional_params.get("entity_types", [])
 
     # Test relation detection
-    result = analyzer.analyze_query("Show connections between people")
+    result = analyzer.analyze_query("Show connections between persons")
     assert result.query_type == QueryType.RELATION
     assert "person" in result.additional_params.get("entity_types", [])
 
