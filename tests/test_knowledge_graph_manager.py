@@ -10,7 +10,7 @@ from memory_mcp_server.knowledge_graph_manager import KnowledgeGraphManager
 from memory_mcp_server.validation import EntityValidationError, ValidationError
 
 
-@pytest.mark.asyncio(scope="function")
+@pytest.mark.asyncio(loop_scope="function")
 async def test_create_entities(
     knowledge_graph_manager: KnowledgeGraphManager,
 ) -> None:
@@ -42,7 +42,7 @@ async def test_create_entities(
     print("test_create_entities: Complete")
 
 
-@pytest.mark.asyncio(scope="function")
+@pytest.mark.asyncio(loop_scope="function")
 async def test_create_relations(
     knowledge_graph_manager: KnowledgeGraphManager,
 ) -> None:
@@ -73,7 +73,7 @@ async def test_create_relations(
     print("test_create_relations: Complete")
 
 
-@pytest.mark.asyncio(scope="function")
+@pytest.mark.asyncio(loop_scope="function")
 async def test_search_functionality(
     knowledge_graph_manager: KnowledgeGraphManager,
 ) -> None:
@@ -114,7 +114,7 @@ async def test_search_functionality(
     assert any(e.name == "different-type" for e in obs_result.entities)
 
 
-@pytest.mark.asyncio(scope="function")
+@pytest.mark.asyncio(loop_scope="function")
 async def test_error_handling(
     knowledge_graph_manager: KnowledgeGraphManager,
 ) -> None:
@@ -151,7 +151,7 @@ async def test_error_handling(
     assert result == []
 
 
-@pytest.mark.asyncio(scope="function")
+@pytest.mark.asyncio(loop_scope="function")
 async def test_graph_persistence(
     knowledge_graph_manager: KnowledgeGraphManager,
 ) -> None:
@@ -178,7 +178,7 @@ async def test_graph_persistence(
     assert "initial" in graph.entities[0].observations
 
 
-@pytest.mark.asyncio(scope="function")
+@pytest.mark.asyncio(loop_scope="function")
 async def test_concurrent_operations(
     knowledge_graph_manager: KnowledgeGraphManager,
 ) -> None:
