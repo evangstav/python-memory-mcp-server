@@ -11,6 +11,7 @@ import aiofiles
 import numpy as np
 from thefuzz import fuzz
 
+from ..caching.cache import CacheManager
 from ..exceptions import EntityNotFoundError, FileAccessError
 from ..interfaces import (
     BatchOperation,
@@ -22,6 +23,7 @@ from ..interfaces import (
     SearchOptions,
 )
 from .base import Backend
+from .memory_usage import MemoryUsageTracker
 
 
 @dataclass
@@ -73,18 +75,22 @@ class JsonlBackend(Backend):
         self._write_lock = ReentrantLock()
         self._lock = asyncio.Lock()
 
+        # Initialize cache manager
+        self.cache_manager = CacheManager()
+
         # Transaction support: when a transaction is active, we work on separate copies.
         self._transaction_cache: Optional[KnowledgeGraph] = None
         self._transaction_indices: Optional[Dict[str, Any]] = None
         self._in_transaction = False
 
+        # Initialize indices structure with default values
         self._indices: Dict[str, Any] = {
-            "entity_names": {},
-            "entity_types": defaultdict(list),
-            "relations_from": defaultdict(list),
-            "relations_to": defaultdict(list),
-            "relation_keys": set(),
-            "observation_index": defaultdict(set),
+            "entity_names": {},  # Map of entity name -> Entity
+            "entity_types": defaultdict(list),  # Map of entity type -> List[Entity]
+            "relations_from": defaultdict(list),  # Map of from entity -> List[Relation]
+            "relations_to": defaultdict(list),  # Map of to entity -> List[Relation]
+            "relation_keys": set(),  # Set of (from, to, type) tuples
+            "observation_index": defaultdict(set),  # Map of word -> Set[entity_name]
         }
 
     async def initialize(self) -> None:
@@ -133,6 +139,12 @@ class JsonlBackend(Backend):
         if self._in_transaction:
             return self._transaction_cache  # type: ignore
 
+        # Check if the cache is available in the CacheManager first
+        cached_graph = self.cache_manager.graph_cache.get("full_graph")
+        if cached_graph:
+            return cached_graph
+
+        # First check outside the lock if refresh is needed
         current_time = time.monotonic()
         file_mtime = (
             self.memory_path.stat().st_mtime if self.memory_path.exists() else 0
@@ -146,6 +158,7 @@ class JsonlBackend(Backend):
 
         if needs_refresh:
             async with self._lock:
+                # Double-check inside lock to avoid race conditions
                 current_time = time.monotonic()
                 file_mtime = (
                     self.memory_path.stat().st_mtime if self.memory_path.exists() else 0
@@ -158,12 +171,16 @@ class JsonlBackend(Backend):
                 )
                 if needs_refresh:
                     try:
-                        graph = await self._load_graph_from_file()
+                        # Use memory-aware loading
+                        graph = await self._load_graph_with_memory_control()
                         self._cache = graph
                         self._cache_timestamp = current_time
                         self._cache_file_mtime = file_mtime
                         self._build_indices(graph)
                         self._dirty = False
+
+                        # Update the cache manager
+                        self.cache_manager.graph_cache.set("full_graph", graph)
                     except FileAccessError:
                         raise
                     except Exception as e:
@@ -210,48 +227,144 @@ class JsonlBackend(Backend):
         except Exception as err:
             raise FileAccessError(f"Error reading file: {str(err)}") from err
 
+    async def _load_graph_from_file_chunked(
+        self, chunk_size: int = 1000
+    ) -> KnowledgeGraph:
+        """Load graph from file in chunks to minimize memory usage."""
+        if not self.memory_path.exists():
+            return KnowledgeGraph(entities=[], relations=[])
+
+        entities = []
+        relations = []
+
+        try:
+            async with aiofiles.open(self.memory_path, mode="r", encoding="utf-8") as f:
+                buffer = []
+                async for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    buffer.append(line)
+
+                    if len(buffer) >= chunk_size:
+                        # Process this chunk
+                        (
+                            chunk_entities,
+                            chunk_relations,
+                        ) = await self._process_jsonl_chunk(buffer)
+                        entities.extend(chunk_entities)
+                        relations.extend(chunk_relations)
+                        buffer = []
+
+                # Process any remaining lines
+                if buffer:
+                    chunk_entities, chunk_relations = await self._process_jsonl_chunk(
+                        buffer
+                    )
+                    entities.extend(chunk_entities)
+                    relations.extend(chunk_relations)
+
+            return KnowledgeGraph(entities=entities, relations=relations)
+        except Exception as err:
+            raise FileAccessError(f"Error reading file: {str(err)}") from err
+
+    async def _process_jsonl_chunk(
+        self, lines: List[str]
+    ) -> Tuple[List[Entity], List[Relation]]:
+        """Process a chunk of JSONL lines."""
+        entities = []
+        relations = []
+
+        for line in lines:
+            if not line.strip():
+                continue
+
+            try:
+                item = json.loads(line)
+                item_type = item.get("type")
+
+                if item_type == "entity":
+                    entities.append(
+                        Entity(
+                            name=item["name"],
+                            entityType=item["entityType"],
+                            observations=item["observations"],
+                        )
+                    )
+                elif item_type == "relation":
+                    relations.append(
+                        Relation(
+                            from_=item["from"],
+                            to=item["to"],
+                            relationType=item["relationType"],
+                        )
+                    )
+            except json.JSONDecodeError as e:
+                raise FileAccessError(f"Error parsing JSON: {str(e)}") from e
+            except KeyError as e:
+                raise FileAccessError(f"Missing required key: {str(e)}") from e
+
+        return entities, relations
+
+    async def _load_graph_with_memory_control(
+        self, max_memory_percent: float = 80.0
+    ) -> KnowledgeGraph:
+        """Load graph with memory usage control."""
+        # Check current memory usage
+        current_usage = MemoryUsageTracker.get_memory_usage_percent()
+        if current_usage > max_memory_percent:
+            # Memory usage too high, use chunked loading
+            return await self._load_graph_from_file_chunked()
+        else:
+            # Memory usage acceptable, use standard loading
+            return await self._load_graph_from_file()
+
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
+        """Write graph to disk using buffered writes and atomic file replacement."""
         # This function writes to disk. Note that during a transaction, it is only called on commit.
         temp_path = self.memory_path.with_suffix(".tmp")
         buffer_size = 1000  # Buffer size (number of lines)
+
         try:
             async with aiofiles.open(temp_path, mode="w", encoding="utf-8") as f:
-                buffer = []
-                # Write entities.
-                for entity in graph.entities:
-                    line = json.dumps(
-                        {
-                            "type": "entity",
-                            "name": entity.name,
-                            "entityType": entity.entityType,
-                            "observations": entity.observations,
-                        }
-                    )
-                    buffer.append(line)
-                    if len(buffer) >= buffer_size:
-                        await f.write("\n".join(buffer) + "\n")
-                        buffer = []
-                if buffer:
-                    await f.write("\n".join(buffer) + "\n")
+                # Common function to write buffered data
+                async def write_buffered(items, item_to_json):
                     buffer = []
+                    for item in items:
+                        buffer.append(json.dumps(item_to_json(item)))
+                        if len(buffer) >= buffer_size:
+                            await f.write("\n".join(buffer) + "\n")
+                            buffer.clear()
 
-                # Write relations.
-                for relation in graph.relations:
-                    line = json.dumps(
-                        {
-                            "type": "relation",
-                            "from": relation.from_,
-                            "to": relation.to,
-                            "relationType": relation.relationType,
-                        }
-                    )
-                    buffer.append(line)
-                    if len(buffer) >= buffer_size:
+                    if buffer:
                         await f.write("\n".join(buffer) + "\n")
-                        buffer = []
-                if buffer:
-                    await f.write("\n".join(buffer) + "\n")
+
+                # Write entities
+                await write_buffered(
+                    graph.entities,
+                    lambda entity: {
+                        "type": "entity",
+                        "name": entity.name,
+                        "entityType": entity.entityType,
+                        "observations": entity.observations,
+                    },
+                )
+
+                # Write relations
+                await write_buffered(
+                    graph.relations,
+                    lambda relation: {
+                        "type": "relation",
+                        "from": relation.from_,
+                        "to": relation.to,
+                        "relationType": relation.relationType,
+                    },
+                )
+
+            # Atomic file replacement
             temp_path.replace(self.memory_path)
+
         except Exception as err:
             raise FileAccessError(f"Error saving file: {str(err)}") from err
         finally:
@@ -294,6 +407,13 @@ class JsonlBackend(Backend):
                     await self._save_graph(graph)
                     self._dirty = False
                     self._cache_timestamp = time.monotonic()
+
+                    # Invalidate cache entries for new entities
+                    for entity in new_entities:
+                        self.cache_manager.invalidate_entity(entity.name)
+
+                    # Update main cache
+                    self.cache_manager.graph_cache.set("full_graph", graph)
 
             return new_entities
 
@@ -356,6 +476,13 @@ class JsonlBackend(Backend):
                     self._dirty = False
                     self._cache_timestamp = time.monotonic()
 
+                    # Invalidate cache for deleted entities
+                    for name in deleted_names:
+                        self.cache_manager.invalidate_entity(name)
+
+                    # Update main cache
+                    self.cache_manager.graph_cache.set("full_graph", graph)
+
             return deleted_names
 
     async def create_relations(self, relations: List[Relation]) -> List[Relation]:
@@ -392,6 +519,18 @@ class JsonlBackend(Backend):
                     await self._save_graph(graph)
                     self._dirty = False
                     self._cache_timestamp = time.monotonic()
+
+                    # Invalidate cache for affected entities
+                    affected_entities = set()
+                    for relation in new_relations:
+                        affected_entities.add(relation.from_)
+                        affected_entities.add(relation.to)
+
+                    for entity_name in affected_entities:
+                        self.cache_manager.invalidate_entity(entity_name)
+
+                    # Update main cache
+                    self.cache_manager.graph_cache.set("full_graph", graph)
 
             return new_relations
 
@@ -437,6 +576,13 @@ class JsonlBackend(Backend):
                     self._dirty = False
                     self._cache_timestamp = time.monotonic()
 
+                    # Invalidate cache for affected entities
+                    self.cache_manager.invalidate_entity(from_)
+                    self.cache_manager.invalidate_entity(to)
+
+                    # Update main cache
+                    self.cache_manager.graph_cache.set("full_graph", graph)
+
     async def read_graph(self) -> KnowledgeGraph:
         return await self._check_cache()
 
@@ -449,6 +595,9 @@ class JsonlBackend(Backend):
                 self._dirty = False
                 self._cache_timestamp = time.monotonic()
 
+                # Clear all caches to ensure fresh data on next read
+                self.cache_manager.clear_all()
+
     async def search_nodes(
         self, query: str, options: Optional[SearchOptions] = None
     ) -> KnowledgeGraph:
@@ -458,53 +607,112 @@ class JsonlBackend(Backend):
         Otherwise, a simple case‐insensitive substring search is performed.
         Relations are returned only if both endpoints are in the set of matched entities.
         """
+        # Early return for empty query
+        if not query or not query.strip():
+            return KnowledgeGraph(entities=[], relations=[])
+
+        # Create a cache key based on query and options
+        cache_key = self._create_search_cache_key(query, options)
+
+        # Try cache first
+        cached_result = self.cache_manager.search_cache.get(cache_key)
+        if cached_result:
+            return cached_result
+
+        # Cache miss - perform search
         graph = await self._check_cache()
-        matched_entities = []
+
         if options is not None and options.fuzzy:
-            # Use provided weights or default to 1.0 if not provided.
-            weights = (
-                options.weights
-                if options.weights is not None
-                else {"name": 1.0, "type": 1.0, "observations": 1.0}
-            )
-            q = query.strip()
-            for entity in graph.entities:
-                # Compute robust scores for each field.
-                name_score = fuzz.WRatio(q, entity.name)
-                type_score = fuzz.WRatio(q, entity.entityType)
-                obs_score = 0
-                if entity.observations:
-                    # For each observation, take the best between WRatio and partial_ratio.
-                    scores = [
-                        max(fuzz.WRatio(q, obs), fuzz.partial_ratio(q, obs))
-                        for obs in entity.observations
-                    ]
-                    obs_score = max(scores) if scores else 0
-
-                total_score = (
-                    name_score * weights.get("name", 1.0)
-                    + type_score * weights.get("type", 1.0)
-                    + obs_score * weights.get("observations", 1.0)
-                )
-                if total_score >= options.threshold:
-                    matched_entities.append(entity)
+            matched_entities = self._perform_fuzzy_search(graph, query, options)
         else:
-            q = query.lower()
-            for entity in graph.entities:
-                if (
-                    q in entity.name.lower()
-                    or q in entity.entityType.lower()
-                    or any(q in obs.lower() for obs in entity.observations)
-                ):
-                    matched_entities.append(entity)
+            matched_entities = self._perform_simple_search(graph, query)
 
+        # Find relations between matched entities
         matched_names = {entity.name for entity in matched_entities}
         matched_relations = [
             rel
             for rel in graph.relations
             if rel.from_ in matched_names and rel.to in matched_names
         ]
-        return KnowledgeGraph(entities=matched_entities, relations=matched_relations)
+
+        result = KnowledgeGraph(entities=matched_entities, relations=matched_relations)
+
+        # Cache the result
+        self.cache_manager.search_cache.set(cache_key, result)
+
+        return result
+
+    def _create_search_cache_key(
+        self, query: str, options: Optional[SearchOptions]
+    ) -> str:
+        """Create a cache key for search results based on query and options."""
+        cache_key = query.strip()
+        if options:
+            cache_key += f"|{options.fuzzy if options.fuzzy else False}"
+            if hasattr(options, "threshold") and options.threshold:
+                cache_key += f"|{options.threshold}"
+            if hasattr(options, "weights") and options.weights:
+                weights_str = "|".join(
+                    f"{k}:{v}" for k, v in sorted(options.weights.items())
+                )
+                cache_key += f"|{weights_str}"
+        return cache_key
+
+    def _perform_fuzzy_search(
+        self, graph: KnowledgeGraph, query: str, options: SearchOptions
+    ) -> List[Entity]:
+        """Perform fuzzy search on entities."""
+        matched_entities = []
+        # Use provided weights or default to 1.0 if not provided
+        weights = (
+            options.weights
+            if options.weights is not None
+            else {"name": 1.0, "type": 1.0, "observations": 1.0}
+        )
+        q = query.strip()
+
+        for entity in graph.entities:
+            # Compute robust scores for each field
+            name_score = fuzz.WRatio(q, entity.name)
+            type_score = fuzz.WRatio(q, entity.entityType)
+
+            # Calculate observation score
+            obs_score = 0
+            if entity.observations:
+                # For each observation, take the best between WRatio and partial_ratio
+                scores = [
+                    max(fuzz.WRatio(q, obs), fuzz.partial_ratio(q, obs))
+                    for obs in entity.observations
+                ]
+                obs_score = max(scores) if scores else 0
+
+            # Calculate weighted total score
+            total_score = (
+                name_score * weights.get("name", 1.0)
+                + type_score * weights.get("type", 1.0)
+                + obs_score * weights.get("observations", 1.0)
+            )
+
+            # Add entity if score exceeds threshold
+            if total_score >= options.threshold:
+                matched_entities.append(entity)
+
+        return matched_entities
+
+    def _perform_simple_search(self, graph: KnowledgeGraph, query: str) -> List[Entity]:
+        """Perform simple substring search on entities."""
+        matched_entities = []
+        q = query.lower().strip()
+
+        for entity in graph.entities:
+            if (
+                q in entity.name.lower()
+                or q in entity.entityType.lower()
+                or any(q in obs.lower() for obs in entity.observations)
+            ):
+                matched_entities.append(entity)
+
+        return matched_entities
 
     async def add_observations(self, entity_name: str, observations: List[str]) -> None:
         if not observations:
@@ -544,9 +752,16 @@ class JsonlBackend(Backend):
                 self._dirty = False
                 self._cache_timestamp = time.monotonic()
 
+                # Invalidate cache for the updated entity
+                self.cache_manager.invalidate_entity(entity_name)
+
+                # Update main cache
+                self.cache_manager.graph_cache.set("full_graph", graph)
+
     async def add_batch_observations(
         self, observations_map: Dict[str, List[str]]
     ) -> None:
+        """Add multiple observations to multiple entities in a single batch operation."""
         if not observations_map:
             raise ValueError("Observations map cannot be empty")
 
@@ -555,6 +770,7 @@ class JsonlBackend(Backend):
             existing_entities = cast(Dict[str, Entity], indices["entity_names"])
             entity_types = cast(Dict[str, List[Entity]], indices["entity_types"])
 
+            # Validate all entities exist before making any changes
             missing_entities = [
                 name for name in observations_map if name not in existing_entities
             ]
@@ -563,10 +779,15 @@ class JsonlBackend(Backend):
                     f"Entities not found: {', '.join(missing_entities)}"
                 )
 
+            # Track which entities need updates
             updated_entities = {}
+            affected_entity_names = set()
+
+            # Process each entity's observations
             for entity_name, observations in observations_map.items():
                 if not observations:
                     continue
+
                 entity = existing_entities[entity_name]
                 updated_entity = Entity(
                     name=entity.name,
@@ -574,35 +795,62 @@ class JsonlBackend(Backend):
                     observations=list(entity.observations) + observations,
                 )
                 updated_entities[entity_name] = updated_entity
+                affected_entity_names.add(entity_name)
 
+            # Apply updates if we have any
             if updated_entities:
+                # Update the main entities list
                 graph.entities = [
                     updated_entities.get(e.name, e) for e in graph.entities
                 ]
+
+                # Update indices
                 for updated_entity in updated_entities.values():
+                    # Update entity_names index
                     existing_entities[updated_entity.name] = updated_entity
+
+                    # Update entity_types index
                     et_list = entity_types.get(updated_entity.entityType, [])
                     for i, e in enumerate(et_list):
                         if e.name == updated_entity.name:
                             et_list[i] = updated_entity
                             break
+
+                # Update observation index
+                observation_index = cast(
+                    Dict[str, Set[str]], indices["observation_index"]
+                )
+                for entity_name in updated_entities:
+                    # Add words from new observations to index
+                    for obs in observations_map[entity_name]:
+                        for word in obs.lower().split():
+                            observation_index[word].add(entity_name)
+
+                # Persist changes if not in a transaction
                 if not self._in_transaction:
                     self._dirty = True
                     await self._save_graph(graph)
                     self._dirty = False
                     self._cache_timestamp = time.monotonic()
-                    
+
+                    # Invalidate caches for affected entities
+                    for entity_name in affected_entity_names:
+                        self.cache_manager.invalidate_entity(entity_name)
+
+                    # Update main graph cache
+                    self.cache_manager.graph_cache.set("full_graph", graph)
+
     # Embedding Handling
     async def store_embedding(self, entity_name: str, vector: np.ndarray) -> None:
         """Store embedding vector for an entity."""
         # Store as a separate file alongside the main JSONL file
-        embedding_path = self.memory_path.with_suffix('.embeddings')
+        embedding_path = self.memory_path.with_suffix(".embeddings")
         async with self._write_lock:
             try:
                 # Load existing embeddings
                 embeddings = {}
                 if embedding_path.exists():
-                    async with aiofiles.open(embedding_path, mode='rb') as f:
+                    async with aiofiles.open(embedding_path, mode="rb") as f:
                         content = await f.read()
                         if content:
                             embeddings = pickle.loads(content)
@@ -611,19 +859,19 @@ class JsonlBackend(Backend):
                 embeddings[entity_name] = vector.tolist()
 
                 # Save back to file
-                async with aiofiles.open(embedding_path, mode='wb') as f:
+                async with aiofiles.open(embedding_path, mode="wb") as f:
                     await f.write(pickle.dumps(embeddings))
             except Exception as e:
                 raise FileAccessError(f"Error storing embedding: {str(e)}")  # noqa: B904
 
     async def get_embedding(self, entity_name: str) -> Optional[np.ndarray]:
         """Get embedding vector for an entity."""
-        embedding_path = self.memory_path.with_suffix('.embeddings')
+        embedding_path = self.memory_path.with_suffix(".embeddings")
         if not embedding_path.exists():
             return None
 
         try:
-            async with aiofiles.open(embedding_path, mode='rb') as f:
+            async with aiofiles.open(embedding_path, mode="rb") as f:
                 content = await f.read()
                 if not content:
                     return None
@@ -633,7 +881,7 @@ class JsonlBackend(Backend):
                 return np.array(embeddings[entity_name])
             return None
         except Exception as e:
-            raise FileAccessError(f"Error getting embedding: {str(e)}")
+            raise FileAccessError(f"Error getting embedding: {str(e)}") from e
 
     #
     # Transaction Methods
@@ -690,6 +938,9 @@ class JsonlBackend(Backend):
             self._in_transaction = False
             self._dirty = False
             self._cache_timestamp = time.monotonic()
+
+            # Update the cache manager with the committed changes
+            self.cache_manager.graph_cache.set("full_graph", self._cache)
 
     async def execute_batch(self, operations: List[BatchOperation]) -> BatchResult:
         if not operations:

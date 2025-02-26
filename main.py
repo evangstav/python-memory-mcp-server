@@ -2,6 +2,7 @@
 """Memory MCP server using FastMCP."""
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -10,6 +11,12 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.prompts.base import Message, UserMessage
 from pydantic import BaseModel
 
+from memory_mcp_server.benchmarking.benchmarks import (
+    benchmark_create_entities,
+    benchmark_search,
+    generate_test_graph,
+)
+from memory_mcp_server.benchmarking.profiler import profiler
 from memory_mcp_server.interfaces import Entity, Relation, SearchOptions
 from memory_mcp_server.knowledge_graph_manager import KnowledgeGraphManager
 
@@ -49,7 +56,7 @@ class OperationResponse(BaseModel):
 # Create FastMCP server with dependencies and instructions
 mcp = FastMCP(
     "Memory",
-    dependencies=["pydantic", "jsonl", "numpy"],
+    dependencies=["pydantic", "numpy"],
     version="0.2.0",
     instructions="""
     Memory MCP server providing knowledge graph functionality with semantic search capabilities.
@@ -75,15 +82,31 @@ mcp = FastMCP(
     """,
 )
 
+
+def get_backend(memory_path: Path):
+    """Get appropriate backend based on file extension."""
+    if memory_path.suffix.lower() == ".db":
+        from memory_mcp_server.backends.sqlite import SQLiteBackend
+
+        logging.info(f"Using SQLite backend with file: {memory_path}")
+        return SQLiteBackend(memory_path)
+    else:
+        from memory_mcp_server.backends.jsonl import JsonlBackend
+
+        logging.info(f"Using JSONL backend with file: {memory_path}")
+        return JsonlBackend(memory_path, 60)
+
+
 # Initialize knowledge graph manager using environment variable
 # Default to ~/.claude/memory.jsonl if MEMORY_FILE_PATH not set
-default_memory_path = Path.home() / ".claude" / "memory.jsonl"
+default_memory_path = Path.home() / ".claude" / "memory.json"
 memory_file = Path(os.getenv("MEMORY_FILE_PATH", str(default_memory_path)))
 
 logging.info(f"Memory server using file: {memory_file}")
 
-# Create KnowledgeGraphManager instance
-kg = KnowledgeGraphManager(memory_file, 60)
+# Create KnowledgeGraphManager instance with appropriate backend
+backend = get_backend(memory_file)
+kg = KnowledgeGraphManager(backend, 60)
 
 
 def serialize_to_dict(obj: Any) -> Dict:
@@ -427,6 +450,89 @@ async def regenerate_embeddings(ctx: Context = None) -> OperationResponse:
         return OperationResponse(
             success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
         )
+
+
+@mcp.tool()
+async def run_performance_benchmarks(
+    include_search: bool = True, include_create: bool = True, include_read: bool = True
+) -> Dict[str, Any]:
+    """Run performance benchmarks on the memory system."""
+    results = {}
+
+    if include_search:
+        results["search"] = await benchmark_search(kg)
+
+    if include_create:
+        results["create_entities"] = await benchmark_create_entities(kg)
+
+    if include_read:
+        start_time = time.perf_counter()
+        graph = await kg.read_graph()
+        read_time = time.perf_counter() - start_time
+        results["read_graph"] = {
+            "time_ms": read_time * 1000,
+            "entity_count": len(graph.entities),
+            "relation_count": len(graph.relations),
+        }
+
+    return results
+
+
+@mcp.tool()
+async def get_performance_metrics() -> Dict[str, Any]:
+    """Get collected performance metrics."""
+    return profiler.get_metrics()
+
+
+@mcp.tool()
+async def enable_performance_profiling() -> Dict[str, Any]:
+    """Enable performance profiling."""
+    profiler.enable()
+    return {"status": "enabled"}
+
+
+@mcp.tool()
+async def disable_performance_profiling() -> Dict[str, Any]:
+    """Disable performance profiling."""
+    profiler.disable()
+    metrics = profiler.get_metrics()
+    profiler.clear()
+    return {"status": "disabled", "metrics": metrics}
+
+
+@mcp.tool()
+async def generate_synthetic_graph(
+    node_count: int = 1000,
+    observations_per_node: int = 5,
+    relations_per_node: float = 2.0,
+) -> Dict[str, Any]:
+    """Generate a synthetic graph for testing purposes."""
+    try:
+        # Generate test graph
+        test_graph = await generate_test_graph(
+            node_count=node_count,
+            observations_per_node=observations_per_node,
+            relations_per_node=relations_per_node,
+        )
+
+        # Create entities and relations
+        start_time = time.perf_counter()
+        created_entities = await kg.create_entities(test_graph.entities)
+        entity_time = time.perf_counter() - start_time
+
+        start_time = time.perf_counter()
+        created_relations = await kg.create_relations(test_graph.relations)
+        relation_time = time.perf_counter() - start_time
+
+        return {
+            "success": True,
+            "entities_created": len(created_entities),
+            "relations_created": len(created_relations),
+            "entity_creation_time_ms": entity_time * 1000,
+            "relation_creation_time_ms": relation_time * 1000,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @mcp.prompt()

@@ -8,9 +8,17 @@ A Model Context Protocol (MCP) server that provides knowledge graph functionalit
 - **Semantic Search**: Find conceptually similar entities using vector embeddings
 - **Natural Language Understanding**: Analyze queries to understand intent and context
 - **Temporal Awareness**: Handle time-based queries (recent, past, etc.)
-- **Flexible Storage Backend**: JSONL-based storage with caching for performance
+- **Flexible Storage Backend**: Support for both JSONL and SQLite backends
+- **Performance Optimizations**: Intelligent caching, chunked loading, and memory usage controls
 
 ## Installation
+
+First, clone the repository:
+
+```bash
+git clone https://github.com/yourusername/python-memory-mcp-server.git
+cd python-memory-mcp-server
+```
 
 Install the server in Claude Desktop:
 
@@ -282,6 +290,65 @@ pytest tests/
 
 # Run semantic search tests
 pytest tests/test_semantic_search.py
+
+# Run backend tests
+pytest tests/test_backends/
+
+# Run caching tests
+pytest tests/test_caching/
+
+# Run benchmarking tests
+pytest tests/test_benchmarking/
+```
+
+## Performance Features
+
+The server includes several performance optimization features:
+
+### Intelligent Caching
+The caching system minimizes expensive operations by:
+- Caching full graph data for faster reads
+- Caching entity data for quicker lookups
+- Caching search results for repeated queries
+- Automatic cache invalidation on entity/relation changes
+
+### Memory-Aware Loading
+The system monitors memory usage and adapts its behavior:
+- Uses standard loading when memory usage is low
+- Switches to chunked loading when memory usage is high
+- Avoids memory spikes during large graph operations
+
+### Multiple Backend Support
+- **JSONL Backend**: Simple file-based storage for ease of use
+- **SQLite Backend**: Better performance for large graphs with indexed queries
+
+### Performance Benchmarking
+The server provides tools for measuring performance:
+- `run_performance_benchmarks`: Test search, creation, and read performance
+- `get_performance_metrics`: Get detailed performance statistics
+- `enable_performance_profiling`: Start tracking operation performance
+- `disable_performance_profiling`: Stop tracking and get results
+- `generate_synthetic_graph`: Create test data for benchmarking
+
+### Usage
+```python
+# Run benchmarks
+result = await session.call_tool("run_performance_benchmarks", {
+    "include_search": True,
+    "include_create": True,
+    "include_read": True
+})
+
+# Enable profiling
+await session.call_tool("enable_performance_profiling", {})
+
+# Run some operations
+await session.call_tool("get_graph", {})
+await session.call_tool("search_nodes", {"query": "test"})
+
+# Get performance metrics
+metrics = await session.call_tool("disable_performance_profiling", {})
+print(f"Performance metrics: {metrics}")
 ```
 
 ### Adding New Features

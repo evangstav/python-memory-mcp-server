@@ -15,6 +15,7 @@ dependencies = [
     "ruff>=0.9.4",
     "thefuzz[speedup]>=0.20.0", # Includes python-Levenshtein for performance
     "numpy>=1.24.0",
+    "psutil>=7.0.0",
 ]
 
 [project.optional-dependencies]

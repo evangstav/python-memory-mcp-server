@@ -401,7 +401,6 @@ async def test_execute_batch(backend: JsonlBackend):
         ),
     ]
     result: BatchResult = await backend.execute_batch(operations)
-    print(result)
     assert result.success, "Batch operations should succeed"
     graph = await backend.read_graph()
     assert any(e.name == "Bob" for e in graph.entities)
