@@ -90,6 +90,7 @@ class SearchOptions:
     semantic: bool = False
     max_results: int = 10
     include_relations: bool = True
+    entity_type: Optional[str] = None
 
 
 class BatchOperationType(Enum):

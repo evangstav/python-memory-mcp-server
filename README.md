@@ -8,6 +8,7 @@ A Model Context Protocol (MCP) server that provides knowledge graph functionalit
 - **Semantic Search**: Find conceptually similar entities using vector embeddings
 - **Natural Language Understanding**: Analyze queries to understand intent and context
 - **Temporal Awareness**: Handle time-based queries (recent, past, etc.)
+- **Conversation Context Tracking**: Maintain awareness of conversation flow over time
 - **Flexible Storage Backend**: Support for both JSONL and SQLite backends
 - **Performance Optimizations**: Intelligent caching, chunked loading, and memory usage controls
 
@@ -229,6 +230,47 @@ if not result.success:
         print(f"Entity not found: {result.error}")
     else:
         print(f"Error deleting relation: {result.error}")
+```
+
+### Update Conversation Context
+```python
+result = await session.call_tool("update_conversation_context", {
+    "current_topic": "Project Planning",
+    "entities_mentioned": ["john-doe", "python-project"],
+    "summary": "Discussed project timeline and implementation details",
+    "importance": 0.8  # Higher values (0.0-1.0) indicate more significant context
+})
+if not result.success:
+    if result.error_type == "VALIDATION_ERROR":
+        print(f"Invalid context data: {result.error}")
+    elif result.error_type == "NOT_FOUND":
+        print(f"Referenced entity not found: {result.error}")
+    else:
+        print(f"Error creating context: {result.error}")
+else:
+    print(f"Context created: {result.message}")
+```
+
+### Get Relevant Context
+```python
+result = await session.call_tool("get_relevant_context", {
+    "current_entities": ["john-doe", "python-project"],
+    "lookback_hours": 24.0,  # How far back to look for relevant context
+    "max_results": 5         # Maximum number of context points to return
+})
+if result.success:
+    if result.error_type == "NO_RESULTS":
+        print(f"No relevant context found: {result.error}")
+    else:
+        contexts = result.data["contexts"]
+        for ctx in contexts:
+            print(f"Topic: {ctx['topic']} (Relevance: {ctx['relevance']:.2f})")
+            print(f"Summary: {ctx['summary']}")
+            print(f"Time: {ctx['age_hours']:.1f} hours ago")
+            print(f"Entities: {', '.join(ctx['entities_mentioned'])}")
+            print("---")
+else:
+    print(f"Error retrieving context: {result.error}")
 ```
 
 ### Flush Memory

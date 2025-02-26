@@ -39,6 +39,7 @@ class KnowledgeGraphValidator:
         "organization",
         "location",
         "event",
+        "conversation_context",
     }
     VALID_RELATION_TYPES = {
         "knows",
@@ -48,6 +49,7 @@ class KnowledgeGraphValidator:
         "belongs-to",
         "depends-on",
         "related-to",
+        "mentions",
     }
 
     @classmethod

@@ -57,9 +57,10 @@ class OperationResponse(BaseModel):
 mcp = FastMCP(
     "Memory",
     dependencies=["pydantic", "numpy"],
-    version="0.2.0",
+    version="0.3.0",
     instructions="""
-    Memory MCP server providing knowledge graph functionality with semantic search capabilities.
+    Memory MCP server providing knowledge graph functionality with semantic search capabilities
+    and conversation context tracking.
 
     Available tools:
     - get_entity: Retrieve entity by name
@@ -73,12 +74,20 @@ mcp = FastMCP(
     - delete_relation: Delete relation between entities
     - flush_memory: Persist changes to storage
     - regenerate_embeddings: Rebuild embeddings for all entities
+    - update_conversation_context: Track conversation flow and topics
+    - get_relevant_context: Retrieve relevant previous conversation context
 
     The semantic search capabilities allow for:
     - Finding conceptually similar entities even when exact terms don't match
     - Understanding temporal references (recent, past, etc.)
     - Identifying entity types and attributes in queries
     - Detecting relationship-focused queries
+
+    The conversation context tracking enables:
+    - Maintaining awareness of conversation flow over time
+    - Understanding which entities are being discussed together
+    - Prioritizing recent and important conversation segments
+    - Providing conversational continuity across sessions
     """,
 )
 
@@ -448,6 +457,120 @@ async def regenerate_embeddings(ctx: Context = None) -> OperationResponse:
         )
     except Exception as e:
         return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
+
+
+@mcp.tool()
+async def update_conversation_context(
+    current_topic: str,
+    entities_mentioned: List[str],
+    summary: str,
+    importance: float = 1.0,
+    ctx: Context = None,
+) -> OperationResponse:
+    """Update the conversation context with current information.
+
+    This records the flow of conversation topics and maintains awareness
+    of which entities are being discussed. These context points can later
+    be retrieved to maintain conversational continuity.
+
+    Args:
+        current_topic: The main topic of the current conversation segment
+        entities_mentioned: List of entity names mentioned in this segment
+        summary: Brief summary of this conversation segment
+        importance: Importance score (0.0-1.0) with higher values indicating
+                   more significant context
+        ctx: Optional context for logging
+
+    Returns:
+        OperationResponse indicating success or failure
+    """
+    try:
+        if ctx:
+            ctx.info(f"Updating conversation context: {current_topic}")
+
+        # Validate importance range
+        if not 0.0 <= importance <= 1.0:
+            return OperationResponse(
+                success=False,
+                error="Importance must be between 0.0 and 1.0",
+                error_type=ERROR_TYPES["VALIDATION_ERROR"],
+            )
+
+        # Update context
+        context_id = await kg.update_conversation_context(
+            current_topic=current_topic,
+            entities_mentioned=entities_mentioned,
+            summary=summary,
+            importance=importance,
+        )
+
+        return OperationResponse(
+            success=True, message=f"Context created with ID: {context_id}"
+        )
+    except ValueError as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
+    except Exception as e:
+        return OperationResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
+        )
+
+
+@mcp.tool()
+async def get_relevant_context(
+    current_entities: List[str],
+    lookback_hours: float = 24.0,
+    max_results: int = 5,
+    ctx: Context = None,
+) -> EntityResponse:
+    """Get relevant conversation context based on time and entity overlap.
+
+    Retrieves previous conversation contexts most relevant to the current
+    conversation, using three factors to determine relevance:
+    1. Recency (exponential decay based on time)
+    2. Entity overlap (matching entities with current context)
+    3. Importance (manually set importance value)
+
+    Args:
+        current_entities: List of entity names in the current context
+        lookback_hours: How many hours to look back for context (default: 24)
+        max_results: Maximum number of results to return (default: 5)
+        ctx: Optional context for logging
+
+    Returns:
+        EntityResponse containing relevant context points
+    """
+    try:
+        if ctx:
+            ctx.info(
+                f"Getting relevant context for entities: {', '.join(current_entities)}"
+            )
+
+        # Get relevant contexts
+        contexts = await kg.get_relevant_context(
+            current_entities=current_entities,
+            lookback_hours=lookback_hours,
+            max_results=max_results,
+        )
+
+        if not contexts:
+            return EntityResponse(
+                success=True,
+                data={"contexts": []},
+                error="No relevant conversation context found",
+                error_type=ERROR_TYPES["NO_RESULTS"],
+            )
+
+        return EntityResponse(success=True, data={"contexts": contexts})
+    except ValueError as e:
+        return EntityResponse(
+            success=False, error=str(e), error_type=ERROR_TYPES["VALIDATION_ERROR"]
+        )
+    except Exception as e:
+        return EntityResponse(
             success=False, error=str(e), error_type=ERROR_TYPES["INTERNAL_ERROR"]
         )
 
