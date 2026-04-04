@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/evangstav-python-memory-mcp-server-badge.png)](https://mseep.ai/app/evangstav-python-memory-mcp-server)
+
 # Memory MCP Server
 
 A Model Context Protocol (MCP) server that provides knowledge graph functionality for managing entities, relations, and observations in memory, with strict validation rules to maintain data consistency.
